@@ -45,7 +45,7 @@
 
     <div class="flex items-center gap-6">
       <!-- Lobby link -->
-      <a href="/"
+      <a href="./"
          class="text-gray-500 hover:text-gray-300 font-mono text-xs tracking-wider transition-colors">
         ← Lobby
       </a>
@@ -122,7 +122,7 @@
 const params     = new URLSearchParams(location.search);
 const roomId     = params.get('room');
 const playerName = (params.get('name') || '').trim().slice(0, 20);
-if (!roomId) location.href = '/';
+if (!roomId) location.href = './';
 
 // ──────────────────────────────────────────────────────────────────
 // CONSTANTS — edit these to tune the game feel
@@ -562,7 +562,7 @@ function connectToServer(roomId) {
     // Code 1008 = Policy Violation — server rejected us (room not found / full)
     if (event.code === 1008) {
       alert(event.reason || 'Could not join room');
-      location.href = '/';
+      location.href = './';
       return;
     }
 
