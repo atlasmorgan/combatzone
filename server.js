@@ -138,6 +138,20 @@ const httpServer = http.createServer((req, res) => {
     return;
   }
 
+  // GET /assets/* → serve static assets
+  if (req.method === 'GET' && path_.startsWith('/assets/')) {
+    const safeName = path.basename(path_);
+    const file = path.join(__dirname, 'assets', safeName);
+    fs.readFile(file, (err, data) => {
+      if (err) { res.writeHead(404); res.end('Not found'); return; }
+      const ext = path.extname(safeName).toLowerCase();
+      const mime = { '.png': 'image/png', '.jpg': 'image/jpeg', '.wav': 'audio/wav', '.mp3': 'audio/mpeg' }[ext] || 'application/octet-stream';
+      res.writeHead(200, { 'Content-Type': mime });
+      res.end(data);
+    });
+    return;
+  }
+
   // Anything else → 404
   res.writeHead(404);
   res.end('Not found');

@@ -25,9 +25,48 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { overflow: hidden; }
+
+    #intro-overlay {
+      position: fixed; inset: 0; z-index: 9999;
+      background: #000;
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0;
+      animation: introFadeIn 0.6s ease-out 0.1s forwards;
+      pointer-events: all;
+    }
+    #intro-overlay.fade-out {
+      animation: introFadeOut 0.5s ease-in forwards;
+      pointer-events: none;
+    }
+    #intro-overlay img {
+      width: min(340px, 80vw);
+    }
+    @keyframes introFadeIn  { to   { opacity: 1; } }
+    @keyframes introFadeOut { to   { opacity: 0; } }
   </style>
 </head>
 <body class="min-h-screen bg-gray-950 flex flex-col items-center justify-center p-6">
+
+  <!-- ── FLAME GAMES INTRO ─────────────────────────────────────── -->
+  <div id="intro-overlay">
+    <img src="/assets/flame-games-logo.png" alt="Flame Games" />
+  </div>
+  <audio id="intro-audio" src="/assets/intro.wav" preload="auto"></audio>
+  <script>
+    (function () {
+      const overlay = document.getElementById('intro-overlay');
+      const audio   = document.getElementById('intro-audio');
+
+      // Play audio (best-effort; browsers may block until interaction)
+      audio.play().catch(() => {});
+
+      // Hold logo for ~1.8s then fade out and remove
+      setTimeout(() => {
+        overlay.classList.add('fade-out');
+        overlay.addEventListener('animationend', () => overlay.remove(), { once: true });
+      }, 1800);
+    })();
+  </script>
 
   <!-- ── TITLE ─────────────────────────────────────────────────── -->
   <h1 class="text-yellow-400 font-black text-4xl tracking-[0.3em] uppercase mb-1">
