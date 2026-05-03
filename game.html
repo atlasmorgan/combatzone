@@ -5,6 +5,23 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Combat Zone</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Firebase compat SDK (CDN — no bundler needed) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script>
+    const firebaseConfig = {
+      apiKey:            'AIzaSyA3zs6pQzkwDaXDl5GIe-xyQLC-PBcdf6g',
+      authDomain:        'combatzone-2d306.firebaseapp.com',
+      projectId:         'combatzone-2d306',
+      storageBucket:     'combatzone-2d306.firebasestorage.app',
+      messagingSenderId: '1095988180425',
+      appId:             '1:1095988180425:web:e794e771d88350efd5e418',
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db   = firebase.firestore();
+    const auth = firebase.auth();
+  </script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { overflow: hidden; background: #111; }
@@ -379,6 +396,30 @@ let myId      = null;  // numeric ID assigned by the server
 let connected = false; // true once we've received 'init'
 let sendTimer = 0;     // accumulates dt; fires a position update every NET_SEND_RATE seconds
 
+// ── Career stats ──────────────────────────────────────────────────
+let sessionKillStreak = 0;
+
+function loadStats() {
+  const defaults = { uid: null, totalKills: 0, totalDeaths: 0, gamesPlayed: 0, bestKillStreak: 0 };
+  try { return Object.assign(defaults, JSON.parse(localStorage.getItem('czCareerStats') || '{}')); }
+  catch { return defaults; }
+}
+function saveStats(delta) {
+  localStorage.setItem('czCareerStats', JSON.stringify(Object.assign(loadStats(), delta)));
+}
+function syncToFirebase(user) {
+  if (!user) return;
+  const s = loadStats();
+  db.collection('players').doc(user.uid).set({
+    playerName:     localStorage.getItem('playerName') || 'Player',
+    totalKills:     s.totalKills,
+    totalDeaths:    s.totalDeaths,
+    gamesPlayed:    s.gamesPlayed,
+    bestKillStreak: s.bestKillStreak,
+    lastSeen:       firebase.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+}
+
 // Other players in the game: id (number) → state object
 const otherPlayers = new Map();
 
@@ -591,13 +632,19 @@ function handleMessage(msg) {
     // ── A player was killed ──
     case 'killed':
       // Credit local kill counter if we were the shooter
-      if (msg.killerId === myId) player.kills++;
+      if (msg.killerId === myId) {
+        player.kills++;
+        sessionKillStreak++;
+        saveStats({ totalKills: loadStats().totalKills + 1 });
+      }
 
       if (msg.id === myId) {
         // We died
         player.dead   = true;
         player.health = 0;
         showOverlay('YOU WERE ELIMINATED — respawning in 3 s…');
+        sessionKillStreak = 0;
+        saveStats({ totalDeaths: loadStats().totalDeaths + 1 });
       } else if (otherPlayers.has(msg.id)) {
         const p = otherPlayers.get(msg.id);
         p.dead = true; p.health = 0;
@@ -1218,6 +1265,24 @@ function gameLoop(timestamp) {
 // ──────────────────────────────────────────────────────────────────
 // roomId was read from the URL at the top of the script.
 // connectToServer starts the handshake; game loop launches on first 'init' message.
+
+// Save career stats and sync to cloud when the player leaves
+window.addEventListener('pagehide', () => {
+  if (!connected) return;
+  const s = loadStats();
+  saveStats({
+    gamesPlayed:    s.gamesPlayed + 1,
+    bestKillStreak: Math.max(s.bestKillStreak, sessionKillStreak),
+  });
+  syncToFirebase(auth.currentUser);
+});
+
+// Sign in anonymously so Firebase writes are authenticated
+auth.onAuthStateChanged(user => {
+  if (!user) auth.signInAnonymously();
+  else saveStats({ uid: user.uid });
+});
+
 connectToServer(roomId);
 </script>
 </html>

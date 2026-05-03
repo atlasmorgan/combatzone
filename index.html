@@ -3,8 +3,25 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Combat Zone — Lobby</title>
+  <title>Combat Zone — Welcome to the Lobby</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Firebase compat SDK (CDN — no bundler needed) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script>
+    const firebaseConfig = {
+      apiKey:            'AIzaSyA3zs6pQzkwDaXDl5GIe-xyQLC-PBcdf6g',
+      authDomain:        'combatzone-2d306.firebaseapp.com',
+      projectId:         'combatzone-2d306',
+      storageBucket:     'combatzone-2d306.firebasestorage.app',
+      messagingSenderId: '1095988180425',
+      appId:             '1:1095988180425:web:e794e771d88350efd5e418',
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db   = firebase.firestore();
+    const auth = firebase.auth();
+  </script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { overflow: hidden; }
@@ -64,7 +81,73 @@
     WASD — move &nbsp;|&nbsp; Mouse — aim &nbsp;|&nbsp; Click / Space — fire &nbsp;|&nbsp; R — reload
   </p>
 
+  <!-- ── CAREER STATS ─────────────────────────────────────────── -->
+  <div class="w-full max-w-xs mt-8">
+    <p class="text-gray-500 font-mono text-xs tracking-[0.2em] uppercase mb-2 border-b border-gray-800 pb-2">
+      YOUR CAREER STATS
+    </p>
+    <div class="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-xs">
+      <span class="text-gray-500">Total Kills</span>
+      <span id="statKills"   class="text-green-400  text-right">0</span>
+      <span class="text-gray-500">Total Deaths</span>
+      <span id="statDeaths"  class="text-red-400    text-right">0</span>
+      <span class="text-gray-500">Games Played</span>
+      <span id="statGames"   class="text-yellow-400 text-right">0</span>
+      <span class="text-gray-500">Best Streak</span>
+      <span id="statStreak"  class="text-orange-400 text-right">0</span>
+    </div>
+  </div>
+
 <script>
+// ── Career stats helpers ──────────────────────────────────────────
+function loadStats() {
+  const defaults = { uid: null, totalKills: 0, totalDeaths: 0, gamesPlayed: 0, bestKillStreak: 0 };
+  try { return Object.assign(defaults, JSON.parse(localStorage.getItem('czCareerStats') || '{}')); }
+  catch { return defaults; }
+}
+function saveStats(delta) {
+  localStorage.setItem('czCareerStats', JSON.stringify(Object.assign(loadStats(), delta)));
+}
+function renderStats() {
+  const s = loadStats();
+  document.getElementById('statKills').textContent   = s.totalKills;
+  document.getElementById('statDeaths').textContent  = s.totalDeaths;
+  document.getElementById('statGames').textContent   = s.gamesPlayed;
+  document.getElementById('statStreak').textContent  = s.bestKillStreak;
+}
+function syncToFirebase(user) {
+  if (!user) return;
+  const s = loadStats();
+  db.collection('players').doc(user.uid).set({
+    playerName:     localStorage.getItem('playerName') || 'Player',
+    totalKills:     s.totalKills,
+    totalDeaths:    s.totalDeaths,
+    gamesPlayed:    s.gamesPlayed,
+    bestKillStreak: s.bestKillStreak,
+    lastSeen:       firebase.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+}
+
+// Show localStorage stats immediately, then merge cloud data when ready
+renderStats();
+auth.onAuthStateChanged(user => {
+  if (!user) { auth.signInAnonymously(); return; }
+  saveStats({ uid: user.uid });
+  db.collection('players').doc(user.uid).get().then(doc => {
+    if (doc.exists) {
+      const r = doc.data(), l = loadStats();
+      saveStats({
+        totalKills:     Math.max(l.totalKills,     r.totalKills     || 0),
+        totalDeaths:    Math.max(l.totalDeaths,    r.totalDeaths    || 0),
+        gamesPlayed:    Math.max(l.gamesPlayed,    r.gamesPlayed    || 0),
+        bestKillStreak: Math.max(l.bestKillStreak, r.bestKillStreak || 0),
+      });
+    }
+    renderStats();
+    syncToFirebase(user);
+  });
+});
+
 // ── Persist name in localStorage ─────────────────────────────────
 const nameInput = document.getElementById('nameInput');
 nameInput.value = localStorage.getItem('playerName') || '';
