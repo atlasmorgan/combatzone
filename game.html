@@ -235,6 +235,18 @@ function spawnPlayer() {
 }
 
 // ──────────────────────────────────────────────────────────────────
+// AUDIO
+// ──────────────────────────────────────────────────────────────────
+const arShootAudio = new Audio('assets/ar-shoot.mp3');
+arShootAudio.volume = 0.4;
+
+function playArShoot() {
+  const s = arShootAudio.cloneNode();
+  s.volume = 0.4;
+  s.play().catch(() => {});
+}
+
+// ──────────────────────────────────────────────────────────────────
 // BULLETS  (local = fired by this client)
 // ──────────────────────────────────────────────────────────────────
 let bullets      = [];
@@ -255,6 +267,7 @@ function fireBullet() {
   player.ammo--;
   player.fireCooldown = FIRE_RATE;
   player.muzzleTimer  = MUZZLE_DURATION;
+  playArShoot();
 
   // Spawn point = just beyond the end of the gun barrel
   const barrelLen = PLAYER_SIZE * 1.4;
