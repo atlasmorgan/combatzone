@@ -413,7 +413,7 @@ let sendTimer = 0;     // accumulates dt; fires a position update every NET_SEND
 let sessionKillStreak = 0;
 
 function loadStats() {
-  const defaults = { uid: null, totalKills: 0, totalDeaths: 0, gamesPlayed: 0, bestKillStreak: 0 };
+  const defaults = { uid: null, totalKills: 0, totalDeaths: 0, gamesPlayed: 0, bestKillStreak: 0, battleBucks: 0, ownedGuns: ['ar'] };
   try { return Object.assign(defaults, JSON.parse(localStorage.getItem('czCareerStats') || '{}')); }
   catch { return defaults; }
 }
@@ -429,6 +429,8 @@ function syncToFirebase(user) {
     totalDeaths:    s.totalDeaths,
     gamesPlayed:    s.gamesPlayed,
     bestKillStreak: s.bestKillStreak,
+    battleBucks:    s.battleBucks,
+    ownedGuns:      s.ownedGuns,
     lastSeen:       firebase.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
 }
@@ -649,7 +651,8 @@ function handleMessage(msg) {
       if (msg.killerId === myId) {
         player.kills++;
         sessionKillStreak++;
-        saveStats({ totalKills: loadStats().totalKills + 1 });
+        const s = loadStats();
+        saveStats({ totalKills: s.totalKills + 1, battleBucks: s.battleBucks + 5 });
       }
 
       if (msg.id === myId) {
@@ -1191,8 +1194,11 @@ function drawHUD() {
     ctx.fillStyle='#88cc88'; ctx.font='bold 12px monospace';
     ctx.fillText(`[ ${player.weapon} ]`, ammoX+190, y+barH-2);
 
+    ctx.fillStyle='#facc15'; ctx.font='bold 12px monospace';
+    ctx.fillText(`◆ ${loadStats().battleBucks} BB`, ammoX+310, y+barH-2);
+
     ctx.fillStyle='#ff6655'; ctx.font='bold 12px monospace';
-    ctx.fillText(`KILLS  ${player.kills}`, ammoX+390, y+barH-2);
+    ctx.fillText(`KILLS  ${player.kills}`, ammoX+430, y+barH-2);
   }
 }
 
