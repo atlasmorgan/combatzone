@@ -537,7 +537,8 @@ function connectToServer(roomId) {
   showOverlay('Connecting to server…');
   // Include the room ID in the WebSocket URL query string
   const nameQ = playerName ? `&name=${encodeURIComponent(playerName)}` : '';
-  ws = new WebSocket(`ws://${location.host}/?room=${roomId}${nameQ}`);
+  const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${wsProto}//${location.host}/combatzone/?room=${roomId}${nameQ}`);
 
   ws.onopen  = () => console.log(`WebSocket connected to room ${roomId}`);
   ws.onerror = () => {}; // onclose fires after onerror; handled there

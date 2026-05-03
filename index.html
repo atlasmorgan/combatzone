@@ -206,9 +206,9 @@ async function hostRoom() {
   btn.disabled = true;
 
   try {
-    const res  = await fetch('/api/rooms', { method: 'POST' });
+    const res  = await fetch('api/rooms', { method: 'POST' });
     const data = await res.json();
-    location.href = `/game?room=${data.id}${getNameParam()}`;
+    location.href = `game?room=${data.id}${getNameParam()}`;
   } catch (err) {
     btn.textContent = '▶ HOST A NEW ROOM';
     btn.disabled = false;
@@ -281,13 +281,13 @@ function buildPips(filled, total) {
 
 // ── Navigate to a room ────────────────────────────────────────────
 function joinRoom(id) {
-  location.href = `/game?room=${id}${getNameParam()}`;
+  location.href = `game?room=${id}${getNameParam()}`;
 }
 
 // ── Fetch and refresh room list ───────────────────────────────────
 async function refreshRooms() {
   try {
-    const res   = await fetch('/api/rooms');
+    const res   = await fetch('api/rooms');
     const rooms = await res.json();
     renderRooms(rooms);
   } catch {
