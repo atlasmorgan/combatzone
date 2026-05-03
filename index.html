@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Combat Zone — Lobby</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; }
+  </style>
+</head>
+<body class="min-h-screen bg-gray-950 flex flex-col items-center justify-center p-6">
+
+  <!-- ── TITLE ─────────────────────────────────────────────────── -->
+  <h1 class="text-yellow-400 font-black text-4xl tracking-[0.3em] uppercase mb-1">
+    ☠ COMBAT ZONE
+  </h1>
+  <p class="text-gray-500 font-mono text-sm tracking-widest mb-10">
+    Multiplayer Tank Arena
+  </p>
+
+  <!-- ── NAME INPUT ──────────────────────────────────────────────── -->
+  <div class="flex flex-col items-center gap-1 mb-8 w-full max-w-xs">
+    <label class="text-gray-500 font-mono text-xs tracking-[0.2em] uppercase self-start">
+      Your Name
+    </label>
+    <input
+      id="nameInput"
+      type="text"
+      maxlength="20"
+      placeholder="Player"
+      class="w-full bg-gray-900 border border-gray-700 focus:border-yellow-500
+             text-yellow-300 font-mono text-sm tracking-wider
+             px-4 py-2 outline-none transition-colors"
+    />
+  </div>
+
+  <!-- ── HOST BUTTON ───────────────────────────────────────────── -->
+  <button
+    id="hostBtn"
+    class="bg-yellow-400 hover:bg-yellow-300 active:bg-yellow-500
+           text-gray-950 font-black text-lg tracking-widest
+           px-10 py-4 rounded mb-12 transition-colors select-none"
+    onclick="hostRoom()"
+  >
+    ▶ HOST A NEW ROOM
+  </button>
+
+  <!-- ── ACTIVE ROOMS ──────────────────────────────────────────── -->
+  <div class="w-full max-w-lg">
+    <p class="text-gray-400 font-mono text-xs tracking-[0.25em] uppercase mb-3 border-b border-gray-800 pb-2">
+      ACTIVE ROOMS
+    </p>
+
+    <!-- Room list — populated by JS -->
+    <div id="roomList" class="flex flex-col gap-2">
+      <p class="text-gray-600 font-mono text-xs">Loading…</p>
+    </div>
+  </div>
+
+  <!-- ── CONTROLS HINT ─────────────────────────────────────────── -->
+  <p class="text-gray-700 font-mono text-xs tracking-wider mt-12 text-center">
+    WASD — move &nbsp;|&nbsp; Mouse — aim &nbsp;|&nbsp; Click / Space — fire &nbsp;|&nbsp; R — reload
+  </p>
+
+<script>
+// ── Persist name in localStorage ─────────────────────────────────
+const nameInput = document.getElementById('nameInput');
+nameInput.value = localStorage.getItem('playerName') || '';
+nameInput.addEventListener('input', () => {
+  localStorage.setItem('playerName', nameInput.value.trim());
+});
+
+function getNameParam() {
+  const n = nameInput.value.trim();
+  return n ? `&name=${encodeURIComponent(n)}` : '';
+}
+
+// ── Host a new room ───────────────────────────────────────────────
+async function hostRoom() {
+  const btn = document.getElementById('hostBtn');
+  btn.textContent = 'Creating…';
+  btn.disabled = true;
+
+  try {
+    const res  = await fetch('/api/rooms', { method: 'POST' });
+    const data = await res.json();
+    location.href = `/game?room=${data.id}${getNameParam()}`;
+  } catch (err) {
+    btn.textContent = '▶ HOST A NEW ROOM';
+    btn.disabled = false;
+    alert('Could not reach server. Is it running?');
+  }
+}
+
+// ── Render room list ──────────────────────────────────────────────
+function renderRooms(rooms) {
+  const container = document.getElementById('roomList');
+
+  if (!rooms) {
+    // Fetch failed
+    container.innerHTML = `
+      <p class="text-red-500 font-mono text-xs">Could not reach server</p>
+    `;
+    return;
+  }
+
+  if (rooms.length === 0) {
+    container.innerHTML = `
+      <p class="text-gray-600 font-mono text-xs">No active rooms — host one above!</p>
+    `;
+    return;
+  }
+
+  container.innerHTML = rooms.map(room => {
+    const isFull  = room.players >= room.maxPlayers;
+    const pips    = buildPips(room.players, room.maxPlayers);
+
+    // JOIN button or FULL badge
+    const action = isFull
+      ? `<span class="bg-red-900 text-red-400 font-mono text-xs px-3 py-1 rounded tracking-widest">FULL</span>`
+      : `<button
+           onclick="joinRoom('${room.id}')"
+           class="bg-green-700 hover:bg-green-600 active:bg-green-800
+                  text-white font-mono text-xs px-4 py-1 rounded tracking-widest transition-colors"
+         >JOIN</button>`;
+
+    return `
+      <div class="flex items-center justify-between
+                  bg-gray-900 border border-gray-800 rounded px-4 py-3">
+        <!-- Room code -->
+        <span class="text-yellow-400 font-mono text-sm tracking-[0.2em] w-20">${room.id}</span>
+
+        <!-- Player pips -->
+        <div class="flex items-center gap-1">
+          ${pips}
+          <span class="text-gray-500 font-mono text-xs ml-2">${room.players}/${room.maxPlayers}</span>
+        </div>
+
+        <!-- Action -->
+        ${action}
+      </div>
+    `;
+  }).join('');
+}
+
+// Build filled / empty pip dots (8 total)
+function buildPips(filled, total) {
+  let html = '';
+  for (let i = 0; i < total; i++) {
+    const isOn = i < filled;
+    html += `<span class="inline-block w-2.5 h-2.5 rounded-full ${
+      isOn ? 'bg-green-500' : 'bg-gray-700'
+    }"></span>`;
+  }
+  return html;
+}
+
+// ── Navigate to a room ────────────────────────────────────────────
+function joinRoom(id) {
+  location.href = `/game?room=${id}${getNameParam()}`;
+}
+
+// ── Fetch and refresh room list ───────────────────────────────────
+async function refreshRooms() {
+  try {
+    const res   = await fetch('/api/rooms');
+    const rooms = await res.json();
+    renderRooms(rooms);
+  } catch {
+    renderRooms(null); // show error state
+  }
+}
+
+// Initial load + auto-refresh every 3 seconds
+refreshRooms();
+setInterval(refreshRooms, 3000);
+</script>
+</body>
+</html>

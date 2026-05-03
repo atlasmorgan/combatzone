@@ -1,0 +1,1223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Combat Zone</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #111; }
+    canvas { display: block; }
+  </style>
+</head>
+<body class="flex flex-col h-screen bg-gray-950">
+
+  <!-- ── TOP BAR ──────────────────────────────────────────────── -->
+  <header id="topBar"
+    class="flex items-center justify-between px-5 py-1.5
+           bg-gray-900 border-b border-yellow-700 shrink-0 select-none">
+
+    <div class="flex items-center gap-4">
+      <span class="text-yellow-400 font-black tracking-[0.3em] uppercase text-sm">
+        ☠ Combat Zone
+      </span>
+      <!-- Room code badge — filled in after server handshake -->
+      <span id="roomCode" class="text-yellow-600 font-mono text-xs tracking-widest">ROOM: ----</span>
+    </div>
+
+    <div class="flex items-center gap-6">
+      <!-- Lobby link -->
+      <a href="/"
+         class="text-gray-500 hover:text-gray-300 font-mono text-xs tracking-wider transition-colors">
+        ← Lobby
+      </a>
+      <!-- Live player count (updated from JS) -->
+      <span id="playerCount" class="text-green-400 font-mono text-xs tracking-wider">
+        ● 0 online
+      </span>
+      <!-- Kill counter -->
+      <span id="killCounter" class="text-red-400 font-mono font-bold text-sm tracking-widest">
+        KILLS: 0
+      </span>
+      <!-- Chat toggle button -->
+      <button id="chatBtn"
+        class="text-yellow-500 hover:text-yellow-300 font-mono text-xs tracking-wider
+               border border-yellow-700 hover:border-yellow-400 px-2 py-0.5
+               transition-colors select-none">
+        CHAT [C]
+      </button>
+    </div>
+  </header>
+
+  <!-- ── CANVAS + OVERLAY wrapper (position:relative lets overlay sit on top) -->
+  <div class="relative grow">
+    <canvas id="gameCanvas" class="w-full h-full block"></canvas>
+
+    <!-- Floating chat feed (visible even when panel is closed) -->
+    <div id="chatFeed"
+      class="absolute left-3 bottom-16 w-72 flex flex-col-reverse gap-0.5
+             pointer-events-none z-30 select-none">
+    </div>
+
+    <!-- Chat panel -->
+    <div id="chatPanel"
+      class="hidden absolute right-0 top-0 h-full w-64
+             bg-gray-900/90 border-l border-yellow-700/40
+             flex flex-col z-40">
+      <div id="chatLog"
+        class="flex-1 overflow-y-auto p-2 space-y-1 text-xs font-mono">
+      </div>
+      <div class="border-t border-gray-700 p-2 flex gap-2">
+        <input id="chatInput" type="text" maxlength="200" placeholder="say something…"
+          class="flex-1 bg-gray-800 text-gray-200 text-xs font-mono px-2 py-1
+                 border border-gray-600 focus:border-yellow-500 outline-none" />
+        <button id="chatSend"
+          class="text-yellow-400 font-mono text-xs px-2 py-1
+                 border border-yellow-700 hover:border-yellow-400 transition-colors">
+          ↵
+        </button>
+      </div>
+    </div>
+
+    <!-- Shown while connecting, disconnected, or dead -->
+    <div id="overlay"
+      class="absolute inset-0 flex flex-col items-center justify-center bg-gray-950/95 z-50">
+      <p class="text-yellow-400 font-black text-3xl tracking-[0.2em] mb-5">☠ COMBAT ZONE</p>
+      <p id="overlayText" class="text-gray-300 font-mono text-sm animate-pulse">
+        Connecting to server…
+      </p>
+      <!-- Room code shown on overlay once connected -->
+      <p id="roomDisplay" class="text-yellow-600 font-mono text-xs mt-2 tracking-widest"></p>
+      <p class="text-gray-600 font-mono text-xs mt-6">
+        WASD — move &nbsp;|&nbsp; Mouse — aim &nbsp;|&nbsp; Click / Space — fire &nbsp;|&nbsp; R — reload
+      </p>
+    </div>
+  </div>
+
+</body>
+<script>
+// ══════════════════════════════════════════════════════════════════
+//  COMBAT ZONE — Multiplayer PvP client  (room-aware)
+// ══════════════════════════════════════════════════════════════════
+
+// ── Read room ID from URL; redirect to lobby if missing ──────────
+const params     = new URLSearchParams(location.search);
+const roomId     = params.get('room');
+const playerName = (params.get('name') || '').trim().slice(0, 20);
+if (!roomId) location.href = '/';
+
+// ──────────────────────────────────────────────────────────────────
+// CONSTANTS — edit these to tune the game feel
+// ──────────────────────────────────────────────────────────────────
+const TILE_SIZE       = 40;    // pixels per map tile
+const MAP_COLS        = 50;    // tile columns in the map
+const MAP_ROWS        = 50;    // tile rows in the map
+const PLAYER_SPEED    = 200;   // px per second
+const PLAYER_SIZE     = 14;    // tank hull half-width (pixels)
+const WALL_DENSITY    = 0.20;  // fraction of interior tiles that are walls
+const BULLET_DAMAGE   = 8;     // HP removed per bullet hit
+const BULLET_SPEED    = 480;   // px per second
+const BULLET_RADIUS   = 4;     // visual size of a bullet
+const FIRE_RATE       = 0.18;  // seconds between shots (lower = faster)
+const MUZZLE_DURATION = 0.07;  // seconds the muzzle flash stays visible
+const RELOAD_TIME     = 1.2;   // seconds to reload a magazine
+const NET_SEND_RATE   = 1/30;  // send position to server 30× per second
+
+// ──────────────────────────────────────────────────────────────────
+// CANVAS SETUP
+// ──────────────────────────────────────────────────────────────────
+const canvas = document.getElementById('gameCanvas');
+const ctx    = canvas.getContext('2d');
+
+// Keep the canvas resolution in sync with its CSS size
+function resizeCanvas() {
+  canvas.width  = canvas.offsetWidth;
+  canvas.height = canvas.offsetHeight;
+}
+new ResizeObserver(resizeCanvas).observe(canvas);
+resizeCanvas();
+
+// ──────────────────────────────────────────────────────────────────
+// SEEDED RANDOM NUMBER GENERATOR
+// ──────────────────────────────────────────────────────────────────
+// The server sends one seed; every client calls makeRng(seed) to get
+// identical pseudo-random sequences → identical map layouts.
+function makeRng(seed) {
+  let s = (seed ^ 0xdeadbeef) >>> 0; // ensure unsigned 32-bit integer
+  return function () {
+    // Linear congruential generator (fast, good enough for map gen)
+    s = (Math.imul(1664525, s) + 1013904223) >>> 0;
+    return s / 0x100000000; // normalize to [0, 1)
+  };
+}
+
+// ──────────────────────────────────────────────────────────────────
+// MAP  —  0 = floor,  1 = wall
+// ──────────────────────────────────────────────────────────────────
+let map = [];
+
+// Pass a numeric seed so all clients generate the same layout.
+// Omit the seed (or pass undefined) for a local random map.
+function generateMap(seed) {
+  const rng = seed !== undefined ? makeRng(seed) : Math.random.bind(Math);
+  map = [];
+  for (let row = 0; row < MAP_ROWS; row++) {
+    map[row] = [];
+    for (let col = 0; col < MAP_COLS; col++) {
+      const isBorder = row === 0 || row === MAP_ROWS-1 || col === 0 || col === MAP_COLS-1;
+      map[row][col] = isBorder ? 1 : (rng() < WALL_DENSITY ? 1 : 0);
+    }
+  }
+  // Always clear a 5×5 area at the center so respawning is safe
+  const mr = Math.floor(MAP_ROWS/2), mc = Math.floor(MAP_COLS/2);
+  for (let r = mr-2; r <= mr+2; r++)
+    for (let c = mc-2; c <= mc+2; c++)
+      map[r][c] = 0;
+}
+
+function isWall(col, row) {
+  if (row < 0 || row >= MAP_ROWS || col < 0 || col >= MAP_COLS) return true;
+  return map[row][col] === 1;
+}
+
+// ──────────────────────────────────────────────────────────────────
+// PLAYER STATE  (local player only)
+// ──────────────────────────────────────────────────────────────────
+const player = {
+  x: 0, y: 0,
+  bodyAngle: 0,    // tank hull faces movement direction
+  turretAngle: 0,  // gun turret always faces the mouse
+  health: 100,
+  maxHealth: 100,
+  ammo: 30,
+  maxAmmo: 30,
+  reserveAmmo: 240,
+  weapon: 'Assault Rifle',
+  kills: 0,
+  fireCooldown: 0, // seconds until next shot is allowed
+  muzzleTimer: 0,  // seconds remaining for muzzle flash
+  reloadTimer: 0,  // > 0 while reloading
+  dead: false,     // true while waiting for server respawn
+  name: '',        // assigned by server on connect
+};
+
+function spawnPlayer() {
+  player.x = (MAP_COLS/2)*TILE_SIZE + TILE_SIZE/2;
+  player.y = (MAP_ROWS/2)*TILE_SIZE + TILE_SIZE/2;
+  player.health      = player.maxHealth;
+  player.ammo        = player.maxAmmo;
+  player.reserveAmmo = 240;
+  player.kills       = 0;
+  player.bodyAngle   = 0;
+  player.turretAngle = 0;
+  player.fireCooldown = 0;
+  player.muzzleTimer  = 0;
+  player.reloadTimer  = 0;
+  player.dead         = false;
+}
+
+// ──────────────────────────────────────────────────────────────────
+// BULLETS  (local = fired by this client)
+// ──────────────────────────────────────────────────────────────────
+let bullets      = [];
+let nextBulletId = 0; // ever-incrementing so each bullet has a unique string ID
+
+function startReload() {
+  if (player.reloadTimer > 0)         return; // already reloading
+  if (player.ammo === player.maxAmmo) return; // mag already full
+  if (player.reserveAmmo <= 0)        return; // nothing left to load
+  player.reloadTimer = RELOAD_TIME;
+}
+
+function fireBullet() {
+  if (player.dead || afkMode)                               return;
+  if (player.reloadTimer > 0 || player.fireCooldown > 0)   return;
+  if (player.ammo <= 0)                                     return;
+
+  player.ammo--;
+  player.fireCooldown = FIRE_RATE;
+  player.muzzleTimer  = MUZZLE_DURATION;
+
+  // Spawn point = just beyond the end of the gun barrel
+  const barrelLen = PLAYER_SIZE * 1.4;
+  const bx  = player.x + Math.cos(player.turretAngle) * barrelLen;
+  const by  = player.y + Math.sin(player.turretAngle) * barrelLen;
+  const bvx = Math.cos(player.turretAngle) * BULLET_SPEED;
+  const bvy = Math.sin(player.turretAngle) * BULLET_SPEED;
+  const bulletId = `${myId}_${nextBulletId++}`;
+
+  bullets.push({ id: bulletId, x: bx, y: by, vx: bvx, vy: bvy, life: 2.0 });
+
+  // Tell the server so it can relay the bullet to other players
+  netSend({ type: 'shoot',
+            bullet: { id: bulletId, x: bx, y: by, vx: bvx, vy: bvy } });
+}
+
+// ──────────────────────────────────────────────────────────────────
+// INPUT
+// ──────────────────────────────────────────────────────────────────
+const keys  = {};
+const mouse = { x: 0, y: 0 }; // screen-space
+
+window.addEventListener('keydown', e => {
+  if (e.code === 'KeyC' && document.activeElement !== chatInput) { toggleChat(); return; }
+  if (document.activeElement === chatInput) return;
+  keys[e.code] = true;
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))
+    e.preventDefault();
+  if (e.code === 'Space') fireBullet();
+  if (e.code === 'KeyR')  startReload();
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  mouse.x = e.clientX - rect.left;
+  mouse.y = e.clientY - rect.top;
+});
+canvas.addEventListener('mousedown', e => { if (e.button === 0) fireBullet(); });
+
+// ── Touch / mobile controls ──────────────────────────────────────
+// Left half of screen  → floating joystick (movement)
+// Right half of screen → aim toward touch point + auto-fire while held
+
+const joystick = {
+  active: false, touchId: null,
+  baseX: 0, baseY: 0,
+  knobX: 0, knobY: 0,
+  dx: 0, dy: 0,
+  radius: 80, knobRadius: 32,
+};
+const aimTouch = { active: false, touchId: null, x: 0, y: 0 };
+
+function touchPos(t) {
+  const r = canvas.getBoundingClientRect();
+  return { x: t.clientX - r.left, y: t.clientY - r.top };
+}
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    const { x, y } = touchPos(t);
+    if (x < canvas.width / 2) {
+      if (!joystick.active) {
+        Object.assign(joystick, {
+          active: true, touchId: t.identifier,
+          baseX: x, baseY: y, knobX: x, knobY: y, dx: 0, dy: 0,
+        });
+      }
+    } else {
+      if (!aimTouch.active) {
+        Object.assign(aimTouch, { active: true, touchId: t.identifier, x, y });
+        fireBullet();
+      }
+    }
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    const { x, y } = touchPos(t);
+    if (t.identifier === joystick.touchId) {
+      let ddx = x - joystick.baseX, ddy = y - joystick.baseY;
+      const dist = Math.sqrt(ddx*ddx + ddy*ddy);
+      if (dist > joystick.radius) { const s = joystick.radius/dist; ddx *= s; ddy *= s; }
+      joystick.knobX = joystick.baseX + ddx;
+      joystick.knobY = joystick.baseY + ddy;
+      joystick.dx = ddx / joystick.radius;
+      joystick.dy = ddy / joystick.radius;
+    }
+    if (t.identifier === aimTouch.touchId) {
+      aimTouch.x = x; aimTouch.y = y;
+    }
+  }
+}, { passive: false });
+
+function onTouchEnd(e) {
+  for (const t of e.changedTouches) {
+    if (t.identifier === joystick.touchId) {
+      joystick.active = false; joystick.dx = 0; joystick.dy = 0;
+    }
+    if (t.identifier === aimTouch.touchId) aimTouch.active = false;
+  }
+}
+canvas.addEventListener('touchend',   onTouchEnd);
+canvas.addEventListener('touchcancel', onTouchEnd);
+
+// ──────────────────────────────────────────────────────────────────
+// CAMERA
+// ──────────────────────────────────────────────────────────────────
+const camera = { x: 0, y: 0 };
+
+function updateCamera() {
+  camera.x = player.x - canvas.width  / 2;
+  camera.y = player.y - canvas.height / 2;
+  // Clamp so we never show past the map edges
+  camera.x = Math.max(0, Math.min(camera.x, MAP_COLS*TILE_SIZE - canvas.width));
+  camera.y = Math.max(0, Math.min(camera.y, MAP_ROWS*TILE_SIZE - canvas.height));
+}
+
+// ──────────────────────────────────────────────────────────────────
+// COLLISION
+// ──────────────────────────────────────────────────────────────────
+// Returns true if a rectangle centred at (cx, cy) with half-size hs
+// overlaps any wall tile.  We probe 8 points on the rectangle's perimeter.
+function collidesWithWalls(cx, cy, hs) {
+  return [
+    [cx-hs, cy-hs],[cx+hs, cy-hs],[cx-hs, cy+hs],[cx+hs, cy+hs],
+    [cx,    cy-hs],[cx,    cy+hs],[cx-hs, cy    ],[cx+hs, cy    ],
+  ].some(([px, py]) => isWall(Math.floor(px/TILE_SIZE), Math.floor(py/TILE_SIZE)));
+}
+
+// ──────────────────────────────────────────────────────────────────
+// NETWORKING
+// ──────────────────────────────────────────────────────────────────
+let ws        = null;  // the WebSocket instance
+let myId      = null;  // numeric ID assigned by the server
+let connected = false; // true once we've received 'init'
+let sendTimer = 0;     // accumulates dt; fires a position update every NET_SEND_RATE seconds
+
+// Other players in the game: id (number) → state object
+const otherPlayers = new Map();
+
+// Bullets that other players have fired (we simulate them locally)
+let remoteBullets = [];
+
+// ──────────────────────────────────────────────────────────────────
+// CHAT
+// ──────────────────────────────────────────────────────────────────
+let chatOpen = false;
+const chatPanel = document.getElementById('chatPanel');
+const chatInput = document.getElementById('chatInput');
+const chatLog   = document.getElementById('chatLog');
+
+function toggleChat() {
+  chatOpen = !chatOpen;
+  chatPanel.classList.toggle('hidden', !chatOpen);
+  if (chatOpen) chatInput.focus();
+  else chatInput.blur();
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+const chatFeed = document.getElementById('chatFeed');
+
+function appendChatMessage(name, text) {
+  const html = `<span class="text-yellow-500">${escHtml(name)}</span>`
+             + `<span class="text-gray-500">: </span>`
+             + `<span class="text-gray-300">${escHtml(text)}</span>`;
+
+  // Add to persistent panel log
+  const line = document.createElement('div');
+  line.className = 'leading-tight';
+  line.innerHTML = html;
+  chatLog.appendChild(line);
+  chatLog.scrollTop = chatLog.scrollHeight;
+  while (chatLog.children.length > 100) chatLog.removeChild(chatLog.firstChild);
+
+  // Also show in the floating feed (visible even when panel is closed)
+  const feed = document.createElement('div');
+  feed.className = 'text-xs font-mono leading-tight px-1.5 py-0.5 rounded'
+                 + ' bg-black/50 transition-opacity duration-1000';
+  feed.innerHTML = html;
+  chatFeed.prepend(feed);
+  // Keep at most 5 visible lines in the feed
+  while (chatFeed.children.length > 5) chatFeed.removeChild(chatFeed.lastChild);
+  // Fade out after 5 seconds
+  setTimeout(() => { feed.style.opacity = '0'; }, 5000);
+  setTimeout(() => { feed.remove(); }, 6000);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// COMMANDS
+// ──────────────────────────────────────────────────────────────────
+let showHitboxes = false;
+let afkMode      = false;
+
+function handleCommand(raw) {
+  const [cmd] = raw.slice(1).trim().toLowerCase().split(/\s+/);
+  switch (cmd) {
+    case 'hitbox':
+    case 'hitboxes':
+      showHitboxes = !showHitboxes;
+      appendChatMessage('System', `Hitboxes ${showHitboxes ? 'ON' : 'OFF'}`);
+      break;
+    case 'afk':
+      afkMode = !afkMode;
+      if (afkMode) {
+        player.health = player.maxHealth; // restore hp on entry
+        netSend({ type: 'update', x: player.x, y: player.y,
+                  bodyAngle: player.bodyAngle, turretAngle: player.turretAngle });
+      }
+      netSend({ type: 'afk', active: afkMode });
+      appendChatMessage('System', `AFK mode ${afkMode ? 'ON — movement, shooting & damage disabled' : 'OFF'}`);
+      break;
+    default:
+      appendChatMessage('System', `Unknown command: /${cmd}`);
+  }
+}
+
+function sendChat() {
+  const text = chatInput.value.trim();
+  if (!text) return;
+  chatInput.value = '';
+  if (text.startsWith('/')) { handleCommand(text); return; }
+  netSend({ type: 'chat', text });
+}
+
+document.getElementById('chatBtn').addEventListener('click', toggleChat);
+document.getElementById('chatSend').addEventListener('click', sendChat);
+chatInput.addEventListener('keydown', e => {
+  if (e.code === 'Enter')  { e.preventDefault(); sendChat(); }
+  if (e.code === 'Escape') toggleChat();
+});
+
+// ── Overlay helpers ──
+function showOverlay(text) {
+  document.getElementById('overlayText').textContent = text;
+  document.getElementById('overlay').style.display = 'flex';
+}
+function hideOverlay() {
+  document.getElementById('overlay').style.display = 'none';
+}
+
+// Safe wrapper — does nothing if socket isn't open
+function netSend(obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+}
+
+// Connect to the server, scoped to a specific room
+// roomId is passed explicitly so this function is self-contained.
+function connectToServer(roomId) {
+  showOverlay('Connecting to server…');
+  // Include the room ID in the WebSocket URL query string
+  const nameQ = playerName ? `&name=${encodeURIComponent(playerName)}` : '';
+  ws = new WebSocket(`ws://${location.host}/?room=${roomId}${nameQ}`);
+
+  ws.onopen  = () => console.log(`WebSocket connected to room ${roomId}`);
+  ws.onerror = () => {}; // onclose fires after onerror; handled there
+
+  ws.onclose = (event) => {
+    connected = false;
+
+    // Code 1008 = Policy Violation — server rejected us (room not found / full)
+    if (event.code === 1008) {
+      alert(event.reason || 'Could not join room');
+      location.href = '/';
+      return;
+    }
+
+    // Generic disconnect — show message and retry after 2 s
+    showOverlay('Disconnected — reconnecting…');
+    setTimeout(() => connectToServer(roomId), 2000);
+  };
+
+  ws.onmessage = (e) => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+    handleMessage(msg);
+  };
+}
+
+function handleMessage(msg) {
+  switch (msg.type) {
+
+    // ── Server welcome: contains our ID, map seed, and existing players ──
+    case 'init':
+      myId        = msg.id;
+      player.name = msg.name; // e.g. "Player 3"
+
+      // Generate the same map as every other client using the server's seed
+      generateMap(msg.mapSeed);
+      spawnPlayer();
+      updateCamera();
+
+      // Populate existing players
+      otherPlayers.clear();
+      for (const p of msg.players) otherPlayers.set(p.id, { ...p });
+
+      connected = true;
+      hideOverlay();
+
+      // Show the room code in the top bar and overlay
+      document.getElementById('roomCode').textContent    = 'ROOM: ' + roomId;
+      document.getElementById('roomDisplay').textContent = 'ROOM: ' + roomId;
+
+      // Kick off the game loop on first connection
+      if (!loopStarted) { loopStarted = true; requestAnimationFrame(gameLoop); }
+      refreshPlayerCount();
+      break;
+
+    // ── A new player joined ──
+    case 'joined':
+      otherPlayers.set(msg.player.id, { ...msg.player });
+      refreshPlayerCount();
+      break;
+
+    // ── A player left ──
+    case 'left':
+      otherPlayers.delete(msg.id);
+      remoteBullets = remoteBullets.filter(b => b.ownerId !== msg.id);
+      refreshPlayerCount();
+      break;
+
+    // ── Another player's position/angle update ──
+    case 'snapshot':
+      if (otherPlayers.has(msg.id)) {
+        const p = otherPlayers.get(msg.id);
+        p.x = msg.x; p.y = msg.y;
+        p.bodyAngle = msg.bodyAngle; p.turretAngle = msg.turretAngle;
+      }
+      break;
+
+    // ── Another player fired a bullet — simulate it locally ──
+    case 'bulletSpawned':
+      remoteBullets.push({ ...msg.bullet, ownerId: msg.playerId, life: 2.0 });
+      break;
+
+    // ── A player took damage (could be us or someone else) ──
+    case 'damaged':
+      if (msg.id === myId) {
+        player.health = msg.health;
+      } else if (otherPlayers.has(msg.id)) {
+        otherPlayers.get(msg.id).health = msg.health;
+      }
+      break;
+
+    // ── A player was killed ──
+    case 'killed':
+      // Credit local kill counter if we were the shooter
+      if (msg.killerId === myId) player.kills++;
+
+      if (msg.id === myId) {
+        // We died
+        player.dead   = true;
+        player.health = 0;
+        showOverlay('YOU WERE ELIMINATED — respawning in 3 s…');
+      } else if (otherPlayers.has(msg.id)) {
+        const p = otherPlayers.get(msg.id);
+        p.dead = true; p.health = 0;
+      }
+      break;
+
+    // ── A player toggled AFK ──
+    case 'afkChanged':
+      if (otherPlayers.has(msg.id)) otherPlayers.get(msg.id).afk = msg.afk;
+      break;
+
+    // ── A chat message from any player ──
+    case 'chatMessage':
+      appendChatMessage(msg.name, msg.text);
+      break;
+
+    // ── A player (possibly us) respawned ──
+    case 'respawned':
+      if (msg.id === myId) {
+        // Move us back to spawn and restore health / ammo
+        player.x = msg.x; player.y = msg.y;
+        player.health      = 100;
+        player.ammo        = player.maxAmmo;
+        player.reserveAmmo = 240;
+        player.reloadTimer = 0;
+        player.dead        = false;
+        hideOverlay();
+        updateCamera();
+      } else if (otherPlayers.has(msg.id)) {
+        const p = otherPlayers.get(msg.id);
+        p.x = msg.x; p.y = msg.y; p.health = 100; p.dead = false;
+      }
+      break;
+  }
+}
+
+function refreshPlayerCount() {
+  const total = otherPlayers.size + 1; // +1 for ourselves
+  document.getElementById('playerCount').textContent = `● ${total} online`;
+}
+
+// ──────────────────────────────────────────────────────────────────
+// UPDATE  — called every frame
+// ──────────────────────────────────────────────────────────────────
+function update(dt) {
+  // While connecting or dead, nothing happens
+  if (!connected || player.dead) return;
+
+  // ── Movement: WASD or joystick (locked in AFK mode) ──
+  let dx = 0, dy = 0;
+  if (!afkMode) {
+    if (joystick.active) {
+      dx = joystick.dx; dy = joystick.dy;
+    } else {
+      if (keys['KeyW'] || keys['ArrowUp'])    dy -= 1;
+      if (keys['KeyS'] || keys['ArrowDown'])  dy += 1;
+      if (keys['KeyA'] || keys['ArrowLeft'])  dx -= 1;
+      if (keys['KeyD'] || keys['ArrowRight']) dx += 1;
+      if (dx !== 0 && dy !== 0) { dx *= Math.SQRT1_2; dy *= Math.SQRT1_2; }
+    }
+  }
+
+  // Tank body slowly rotates to face the movement direction
+  if (dx !== 0 || dy !== 0) {
+    const target = Math.atan2(dy, dx);
+    const diff   = ((target - player.bodyAngle + Math.PI*3) % (Math.PI*2)) - Math.PI;
+    player.bodyAngle += diff * Math.min(1, 12 * dt);
+  }
+
+  // Axis-separated wall collision (try X then Y independently)
+  const sx = dx * PLAYER_SPEED * dt;
+  const sy = dy * PLAYER_SPEED * dt;
+  if (!collidesWithWalls(player.x + sx, player.y,          PLAYER_SIZE)) player.x += sx;
+  if (!collidesWithWalls(player.x,      player.y + sy,     PLAYER_SIZE)) player.y += sy;
+
+  // Turret faces mouse (desktop) or right-side touch (mobile)
+  const aimX = aimTouch.active ? aimTouch.x : mouse.x;
+  const aimY = aimTouch.active ? aimTouch.y : mouse.y;
+  const wx = aimX + camera.x;
+  const wy = aimY + camera.y;
+  player.turretAngle = Math.atan2(wy - player.y, wx - player.x);
+  // Auto-fire while holding right-side touch
+  if (aimTouch.active && !afkMode) fireBullet();
+
+  // ── Timers ──
+  player.fireCooldown = Math.max(0, player.fireCooldown - dt);
+  player.muzzleTimer  = Math.max(0, player.muzzleTimer  - dt);
+
+  // Reload countdown
+  if (player.reloadTimer > 0) {
+    player.reloadTimer -= dt;
+    if (player.reloadTimer <= 0) {
+      player.reloadTimer = 0;
+      const take = Math.min(player.maxAmmo - player.ammo, player.reserveAmmo);
+      player.ammo += take; player.reserveAmmo -= take;
+    }
+  }
+  // Auto-reload when magazine empties
+  if (player.ammo === 0 && player.reloadTimer === 0) startReload();
+
+  // ── Move own bullets; remove on wall hit or on hitting another player ──
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const b = bullets[i];
+    b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
+    let remove = b.life <= 0 || isWall(Math.floor(b.x/TILE_SIZE), Math.floor(b.y/TILE_SIZE));
+    if (!remove) {
+      for (const [, p] of otherPlayers) {
+        if (p.dead) continue;
+        const ddx = b.x - p.x, ddy = b.y - p.y;
+        if (Math.sqrt(ddx*ddx + ddy*ddy) < PLAYER_SIZE + BULLET_RADIUS) { remove = true; break; }
+      }
+    }
+    if (remove) bullets.splice(i, 1);
+  }
+
+  // ── Move remote bullets; detect hit on local player or other remote players ──
+  for (let i = remoteBullets.length - 1; i >= 0; i--) {
+    const b = remoteBullets[i];
+    b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
+
+    const wallHit   = isWall(Math.floor(b.x/TILE_SIZE), Math.floor(b.y/TILE_SIZE));
+    const ddx = b.x - player.x, ddy = b.y - player.y;
+    const playerHit = !player.dead &&
+                      Math.sqrt(ddx*ddx + ddy*ddy) < PLAYER_SIZE + BULLET_RADIUS;
+
+    // Check if it visually hits any other remote player (purely cosmetic removal)
+    let remoteHit = false;
+    if (!playerHit) {
+      for (const [pid, p] of otherPlayers) {
+        if (p.dead || pid === b.ownerId) continue;
+        const rx = b.x - p.x, ry = b.y - p.y;
+        if (Math.sqrt(rx*rx + ry*ry) < PLAYER_SIZE + BULLET_RADIUS) { remoteHit = true; break; }
+      }
+    }
+
+    if (b.life <= 0 || wallHit || playerHit || remoteHit) {
+      if (playerHit && !afkMode) {
+        // Report the hit to the server (server applies damage and broadcasts)
+        netSend({ type: 'hit', damage: BULLET_DAMAGE,
+                  bulletId: b.id, killerId: b.ownerId });
+      }
+      remoteBullets.splice(i, 1);
+    }
+  }
+
+  // ── Camera ──
+  updateCamera();
+
+  // ── Send position to server (rate-limited) ──
+  sendTimer += dt;
+  if (sendTimer >= NET_SEND_RATE) {
+    sendTimer = 0;
+    netSend({ type: 'update',
+              x: player.x, y: player.y,
+              bodyAngle: player.bodyAngle, turretAngle: player.turretAngle });
+  }
+
+  // ── Sync kill counter in the Tailwind top bar ──
+  document.getElementById('killCounter').textContent = `KILLS: ${player.kills}`;
+}
+
+// ──────────────────────────────────────────────────────────────────
+// DRAW — shared tank renderer
+// ──────────────────────────────────────────────────────────────────
+// isLocal = true  → green (friendly)
+// isLocal = false → red  (enemy)
+function drawTank(sx, sy, bodyAngle, turretAngle, health, maxHp, name, isLocal, isAfk = false) {
+  const C = isLocal
+    ? { hull:'#4a7c59', tread:'#2e5038', bump:'#3a6045',
+        turret:'#3d6b4a', barrel:'#2a4e36', barrelTip:'#1e3a28', cupola:'#55885e',
+        nameCol:'#88ff88' }
+    : { hull:'#7c4a4a', tread:'#503030', bump:'#604040',
+        turret:'#6b3d3d', barrel:'#4e2a2a', barrelTip:'#3a1e1e', cupola:'#885555',
+        nameCol:'#ff8888' };
+
+  // Drop shadow
+  ctx.save();
+  ctx.translate(sx+3, sy+3); ctx.rotate(bodyAngle);
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillRect(-PLAYER_SIZE, -PLAYER_SIZE*0.75, PLAYER_SIZE*2, PLAYER_SIZE*1.5);
+  ctx.restore();
+
+  // Hull
+  ctx.save();
+  ctx.translate(sx, sy); ctx.rotate(bodyAngle);
+  ctx.fillStyle = C.hull;
+  ctx.fillRect(-PLAYER_SIZE, -PLAYER_SIZE*0.75, PLAYER_SIZE*2, PLAYER_SIZE*1.5);
+  ctx.fillStyle = C.tread;
+  ctx.fillRect(-PLAYER_SIZE, -PLAYER_SIZE*0.75, PLAYER_SIZE*2, PLAYER_SIZE*0.35);
+  ctx.fillRect(-PLAYER_SIZE,  PLAYER_SIZE*0.40,  PLAYER_SIZE*2, PLAYER_SIZE*0.35);
+  ctx.fillStyle = C.bump;
+  for (let i = 0; i < 4; i++) {
+    const bx = -PLAYER_SIZE + 5 + i * (PLAYER_SIZE*2-10) / 3;
+    ctx.fillRect(bx-3, -PLAYER_SIZE*0.75, 6, PLAYER_SIZE*0.35);
+    ctx.fillRect(bx-3,  PLAYER_SIZE*0.40,  6, PLAYER_SIZE*0.35);
+  }
+  ctx.restore();
+
+  // Turret
+  ctx.save();
+  ctx.translate(sx, sy); ctx.rotate(turretAngle);
+  ctx.fillStyle = C.turret;
+  ctx.beginPath(); ctx.arc(0, 0, PLAYER_SIZE*0.58, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = C.barrel;
+  ctx.fillRect(2, -PLAYER_SIZE*0.14, PLAYER_SIZE*1.2, PLAYER_SIZE*0.28);
+  ctx.fillStyle = C.barrelTip;
+  ctx.fillRect(PLAYER_SIZE+4, -PLAYER_SIZE*0.14, PLAYER_SIZE*0.2, PLAYER_SIZE*0.28);
+  ctx.fillStyle = C.cupola;
+  ctx.beginPath(); ctx.arc(0, 0, PLAYER_SIZE*0.28, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  // Health pip above the tank
+  const pipW = PLAYER_SIZE*2.5, pipH = 4;
+  const pipX = sx - pipW/2;
+  const pipY = sy - PLAYER_SIZE*1.4 - pipH - 2;
+  const frac = Math.max(0, health / maxHp);
+  ctx.fillStyle = '#1a1a1a'; ctx.fillRect(pipX, pipY, pipW, pipH);
+  ctx.fillStyle = frac > 0.5 ? '#44bb44' : frac > 0.25 ? '#ddaa00' : '#cc3333';
+  ctx.fillRect(pipX, pipY, pipW*frac, pipH);
+
+  // Name tag
+  ctx.fillStyle = C.nameCol;
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(isAfk ? `${name} (AFK)` : name, sx, pipY - 3);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// DRAW — MAP
+// ──────────────────────────────────────────────────────────────────
+function drawMap() {
+  const startCol = Math.max(0, Math.floor(camera.x/TILE_SIZE));
+  const endCol   = Math.min(MAP_COLS-1, Math.ceil((camera.x+canvas.width) /TILE_SIZE));
+  const startRow = Math.max(0, Math.floor(camera.y/TILE_SIZE));
+  const endRow   = Math.min(MAP_ROWS-1, Math.ceil((camera.y+canvas.height)/TILE_SIZE));
+
+  for (let row = startRow; row <= endRow; row++) {
+    for (let col = startCol; col <= endCol; col++) {
+      const sx = col*TILE_SIZE - camera.x;
+      const sy = row*TILE_SIZE - camera.y;
+
+      if (map[row][col] === 1) {
+        ctx.fillStyle = '#2e2e20'; ctx.fillRect(sx, sy, TILE_SIZE, TILE_SIZE);
+        ctx.fillStyle = '#4a4a32';
+        ctx.fillRect(sx, sy, TILE_SIZE, 3); ctx.fillRect(sx, sy, 3, TILE_SIZE);
+        ctx.fillStyle = '#1a1a10';
+        ctx.fillRect(sx, sy+TILE_SIZE-3, TILE_SIZE, 3);
+        ctx.fillRect(sx+TILE_SIZE-3, sy, 3, TILE_SIZE);
+      } else {
+        ctx.fillStyle = '#1a1a1a'; ctx.fillRect(sx, sy, TILE_SIZE, TILE_SIZE);
+        ctx.strokeStyle = '#212121'; ctx.lineWidth = 0.5;
+        ctx.strokeRect(sx+0.25, sy+0.25, TILE_SIZE-0.5, TILE_SIZE-0.5);
+      }
+    }
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────
+// DRAW — LOCAL PLAYER
+// ──────────────────────────────────────────────────────────────────
+function drawPlayer() {
+  if (player.dead) return;
+  const sx = Math.round(player.x - camera.x);
+  const sy = Math.round(player.y - camera.y);
+
+  drawTank(sx, sy, player.bodyAngle, player.turretAngle,
+           player.health, player.maxHealth, player.name, true, afkMode);
+
+  // Muzzle flash — fades out over MUZZLE_DURATION seconds
+  if (player.muzzleTimer > 0) {
+    const alpha = player.muzzleTimer / MUZZLE_DURATION;
+    const fx = sx + Math.cos(player.turretAngle) * PLAYER_SIZE * 1.4;
+    const fy = sy + Math.sin(player.turretAngle) * PLAYER_SIZE * 1.4;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#ffcc44';
+    ctx.beginPath(); ctx.arc(fx, fy, 10, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(fx, fy,  5, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────
+// DRAW — OTHER PLAYERS
+// ──────────────────────────────────────────────────────────────────
+function drawOtherPlayers() {
+  for (const [id, p] of otherPlayers) {
+    if (p.dead) continue;
+    const sx = Math.round(p.x - camera.x);
+    const sy = Math.round(p.y - camera.y);
+    drawTank(sx, sy,
+             p.bodyAngle   ?? 0,
+             p.turretAngle ?? 0,
+             p.health      ?? 100,
+             100,
+             p.name        ?? `P${id}`,
+             false /* enemy = red */,
+             p.afk ?? false);
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────
+// DRAW — BULLETS
+// ──────────────────────────────────────────────────────────────────
+function drawBullets(bulletList, color, glowColor) {
+  for (const b of bulletList) {
+    const sx = b.x - camera.x, sy = b.y - camera.y;
+    ctx.fillStyle = glowColor;
+    ctx.beginPath(); ctx.arc(sx, sy, BULLET_RADIUS+3, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(sx, sy, BULLET_RADIUS,   0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(sx-1, sy-1, BULLET_RADIUS*0.4, 0, Math.PI*2); ctx.fill();
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────
+// DRAW — HITBOXES
+// ──────────────────────────────────────────────────────────────────
+// Wall-collision probes (8 points on the PLAYER_SIZE square perimeter)
+function drawEntityHitbox(sx, sy, isLocal) {
+  const hs = PLAYER_SIZE;
+  const hitR = PLAYER_SIZE + BULLET_RADIUS; // bullet-player collision radius
+
+  ctx.save();
+
+  // Bullet-collision circle (cyan for self, red for enemy)
+  ctx.strokeStyle = isLocal ? 'rgba(0,255,255,0.7)' : 'rgba(255,80,80,0.7)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(sx, sy, hitR, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Wall-collision square (axis-aligned, white)
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+  ctx.setLineDash([3, 3]);
+  ctx.strokeRect(sx - hs, sy - hs, hs * 2, hs * 2);
+  ctx.setLineDash([]);
+
+  // 8 wall-probe points
+  ctx.fillStyle = 'rgba(255,255,0,0.9)';
+  const probes = [
+    [sx-hs, sy-hs],[sx+hs, sy-hs],[sx-hs, sy+hs],[sx+hs, sy+hs],
+    [sx,    sy-hs],[sx,    sy+hs],[sx-hs, sy    ],[sx+hs, sy    ],
+  ];
+  for (const [px, py] of probes) {
+    ctx.beginPath(); ctx.arc(px, py, 2, 0, Math.PI * 2); ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+function drawHitboxes() {
+  if (!showHitboxes) return;
+
+  // Local player
+  if (!player.dead) {
+    const sx = Math.round(player.x - camera.x);
+    const sy = Math.round(player.y - camera.y);
+    drawEntityHitbox(sx, sy, true);
+  }
+
+  // Other players
+  for (const [, p] of otherPlayers) {
+    if (p.dead) continue;
+    const sx = Math.round(p.x - camera.x);
+    const sy = Math.round(p.y - camera.y);
+    drawEntityHitbox(sx, sy, false);
+  }
+
+  // Bullets — show actual radius
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,100,0.8)';
+  ctx.lineWidth = 1;
+  for (const b of [...bullets, ...remoteBullets]) {
+    ctx.beginPath();
+    ctx.arc(b.x - camera.x, b.y - camera.y, BULLET_RADIUS, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ──────────────────────────────────────────────────────────────────
+// DRAW — MINIMAP  (top-right corner)
+// ──────────────────────────────────────────────────────────────────
+const MM_TILE = 3, MM_PAD = 12;
+
+function drawMinimap() {
+  if (chatOpen) return;
+  const mmW = MAP_COLS*MM_TILE, mmH = MAP_ROWS*MM_TILE;
+  const mmX = canvas.width - mmW - MM_PAD, mmY = MM_PAD;
+
+  // Background
+  ctx.fillStyle = 'rgba(0,0,0,0.70)';
+  ctx.fillRect(mmX-3, mmY-3, mmW+6, mmH+6);
+
+  // Tiles
+  for (let row = 0; row < MAP_ROWS; row++)
+    for (let col = 0; col < MAP_COLS; col++) {
+      ctx.fillStyle = map[row][col]===1 ? '#54543a' : '#252525';
+      ctx.fillRect(mmX+col*MM_TILE, mmY+row*MM_TILE, MM_TILE, MM_TILE);
+    }
+
+  // Viewport box
+  ctx.strokeStyle = 'rgba(255,255,180,0.22)'; ctx.lineWidth = 1;
+  ctx.strokeRect(
+    mmX + (camera.x/TILE_SIZE)*MM_TILE,
+    mmY + (camera.y/TILE_SIZE)*MM_TILE,
+    (canvas.width /TILE_SIZE)*MM_TILE,
+    (canvas.height/TILE_SIZE)*MM_TILE
+  );
+
+  // Other players — red dots
+  for (const [id, p] of otherPlayers) {
+    if (p.dead) continue;
+    ctx.fillStyle = '#ff4444';
+    ctx.beginPath();
+    ctx.arc(mmX+(p.x/TILE_SIZE)*MM_TILE, mmY+(p.y/TILE_SIZE)*MM_TILE, 3, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // Local player — green dot
+  if (!player.dead) {
+    ctx.fillStyle = '#00ff88';
+    ctx.beginPath();
+    ctx.arc(mmX+(player.x/TILE_SIZE)*MM_TILE, mmY+(player.y/TILE_SIZE)*MM_TILE, 3, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  ctx.strokeStyle = '#6b6b40'; ctx.lineWidth = 1;
+  ctx.strokeRect(mmX-3, mmY-3, mmW+6, mmH+6);
+  ctx.fillStyle = '#888866'; ctx.font = '9px monospace'; ctx.textAlign = 'left';
+  ctx.fillText('MAP', mmX-2, mmY-6);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// DRAW — HUD  (bottom strip of the canvas)
+// ──────────────────────────────────────────────────────────────────
+function drawHUD() {
+  const mobile = canvas.width < 540;
+
+  if (mobile) {
+    // ── Mobile: two-row stacked layout ──────────────────────────────
+    const pad = 12, barH = 18, rowH = 32, labelW = 36;
+    const barW = canvas.width - pad*2 - labelW - 8;
+    const row1 = canvas.height - pad - rowH - rowH; // HP row y
+    const row2 = canvas.height - pad - rowH;        // Ammo row y
+
+    // Background panel
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(0, row1 - 6, canvas.width, rowH*2 + 12);
+
+    // Separator line
+    ctx.strokeStyle = 'rgba(120,120,60,0.35)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, row1 - 6); ctx.lineTo(canvas.width, row1 - 6); ctx.stroke();
+
+    // HP bar
+    const hpFrac = Math.max(0, player.health / player.maxHealth);
+    ctx.fillStyle = '#aaaaaa'; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'left';
+    ctx.fillText('HP', pad, row1 + barH - 2);
+    ctx.fillStyle = '#2a2a2a'; ctx.fillRect(pad + labelW, row1, barW, barH);
+    ctx.fillStyle = `rgb(${Math.round(255*(1-hpFrac))},${Math.round(180*hpFrac)},30)`;
+    ctx.fillRect(pad + labelW, row1, barW * hpFrac, barH);
+    ctx.strokeStyle = '#555544'; ctx.lineWidth = 1;
+    ctx.strokeRect(pad + labelW, row1, barW, barH);
+    ctx.fillStyle = '#dddddd'; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(`${player.health} / ${player.maxHealth}`, pad + labelW + barW/2, row1 + barH - 3);
+
+    // Ammo row
+    ctx.textAlign = 'left';
+    if (player.reloadTimer > 0) {
+      ctx.fillStyle = '#aaaaaa'; ctx.font = 'bold 13px monospace';
+      ctx.fillText('AMO', pad, row2 + barH - 2);
+      ctx.fillStyle = Math.floor(player.reloadTimer*4)%2===0 ? '#ff8800' : '#994400';
+      ctx.font = 'bold 14px monospace';
+      ctx.fillText('RELOADING...', pad + labelW, row2 + barH - 2);
+    } else {
+      ctx.fillStyle = '#aaaaaa'; ctx.font = 'bold 13px monospace';
+      ctx.fillText('AMO', pad, row2 + barH - 2);
+      // Ammo pip bar
+      const pipTotal = player.maxAmmo, pipW = Math.min(10, Math.floor((barW - 4) / pipTotal) - 1);
+      const totalPipW = pipTotal * (pipW + 1) - 1;
+      const pipStartX = pad + labelW;
+      for (let i = 0; i < pipTotal; i++) {
+        const filled = i < player.ammo;
+        ctx.fillStyle = filled
+          ? (player.ammo <= Math.floor(player.maxAmmo*0.25) ? '#ff4444' : '#f0c040')
+          : '#2a2a2a';
+        ctx.fillRect(pipStartX + i*(pipW+1), row2 + 2, pipW, barH - 4);
+      }
+      ctx.strokeStyle = '#555544'; ctx.lineWidth = 1;
+      ctx.strokeRect(pipStartX, row2 + 2, totalPipW, barH - 4);
+      // Reserve count
+      ctx.fillStyle = player.reserveAmmo === 0 ? '#555533' : '#b0a030';
+      ctx.font = 'bold 12px monospace'; ctx.textAlign = 'right';
+      ctx.fillText(`+${player.reserveAmmo}`, canvas.width - pad, row2 + barH - 2);
+    }
+
+  } else {
+    // ── Desktop: original single-row layout ─────────────────────────
+    const pad=16, barW=160, barH=14, y=canvas.height-pad-barH;
+
+    ctx.strokeStyle='rgba(120,120,60,0.3)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(0,y-10); ctx.lineTo(canvas.width,y-10); ctx.stroke();
+
+    const hpFrac = Math.max(0, player.health/player.maxHealth);
+    ctx.fillStyle='#aaaaaa'; ctx.font='bold 11px monospace'; ctx.textAlign='left';
+    ctx.fillText('HP', pad, y+barH-2);
+    ctx.fillStyle='#2a2a2a'; ctx.fillRect(pad+24, y, barW, barH);
+    ctx.fillStyle=`rgb(${Math.round(255*(1-hpFrac))},${Math.round(180*hpFrac)},30)`;
+    ctx.fillRect(pad+24, y, barW*hpFrac, barH);
+    ctx.strokeStyle='#555544'; ctx.lineWidth=1; ctx.strokeRect(pad+24, y, barW, barH);
+    ctx.fillStyle='#dddddd'; ctx.font='10px monospace';
+    ctx.fillText(`${player.health} / ${player.maxHealth}`, pad+24+barW+7, y+barH-2);
+
+    const ammoX = pad+24+barW+95;
+    ctx.font = 'bold 12px monospace';
+    if (player.reloadTimer > 0) {
+      ctx.fillStyle = Math.floor(player.reloadTimer*4)%2===0 ? '#ff8800' : '#994400';
+      ctx.fillText('RELOADING...', ammoX, y+barH-2);
+    } else {
+      ctx.fillStyle = player.ammo <= Math.floor(player.maxAmmo*0.25) ? '#ff4444' : '#f0c040';
+      ctx.fillText(String(player.ammo).padStart(2,'0'), ammoX, y+barH-2);
+      ctx.fillStyle = '#888855'; ctx.fillText('  /  ', ammoX+22, y+barH-2);
+      ctx.fillStyle = player.reserveAmmo===0 ? '#555533' : '#b0a030';
+      ctx.fillText(String(player.reserveAmmo), ammoX+60, y+barH-2);
+    }
+
+    ctx.fillStyle='#88cc88'; ctx.font='bold 12px monospace';
+    ctx.fillText(`[ ${player.weapon} ]`, ammoX+190, y+barH-2);
+
+    ctx.fillStyle='#ff6655'; ctx.font='bold 12px monospace';
+    ctx.fillText(`KILLS  ${player.kills}`, ammoX+390, y+barH-2);
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────
+// DRAW — JOYSTICK  (touch devices only)
+// ──────────────────────────────────────────────────────────────────
+function drawJoystick() {
+  const isTouchDevice = navigator.maxTouchPoints > 0;
+  if (!isTouchDevice) return;
+
+  ctx.save();
+
+  if (joystick.active) {
+    // Base ring
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(joystick.baseX, joystick.baseY, joystick.radius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Knob
+    ctx.fillStyle = 'rgba(255,255,255,0.45)';
+    ctx.beginPath();
+    ctx.arc(joystick.knobX, joystick.knobY, joystick.knobRadius, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    // Faint ghost at bottom-left to hint where to touch
+    ctx.globalAlpha = 0.15;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(100, canvas.height - 160, joystick.radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(100, canvas.height - 160, joystick.knobRadius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+// ──────────────────────────────────────────────────────────────────
+// DRAW — master call
+// ──────────────────────────────────────────────────────────────────
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#0d0d0d'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (!connected) return; // show nothing until server handshake completes
+
+  drawMap();
+
+  // Remote (enemy) bullets — orange/red
+  drawBullets(remoteBullets, '#ff5533', 'rgba(255,80,50,0.30)');
+  // Own bullets — yellow
+  drawBullets(bullets, '#ffdd44', 'rgba(255,200,50,0.30)');
+
+  drawOtherPlayers();
+  drawPlayer();
+  drawHitboxes();
+  drawJoystick();
+  drawMinimap();
+  drawHUD();
+}
+
+// ──────────────────────────────────────────────────────────────────
+// GAME LOOP
+// ──────────────────────────────────────────────────────────────────
+let lastTimestamp = null;
+let loopStarted   = false;
+
+function gameLoop(timestamp) {
+  if (!lastTimestamp) { lastTimestamp = timestamp; requestAnimationFrame(gameLoop); return; }
+  const dt = Math.min((timestamp - lastTimestamp) / 1000, 0.1);
+  lastTimestamp = timestamp;
+  update(dt);
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// BOOTSTRAP
+// ──────────────────────────────────────────────────────────────────
+// roomId was read from the URL at the top of the script.
+// connectToServer starts the handshake; game loop launches on first 'init' message.
+connectToServer(roomId);
+</script>
+</html>
