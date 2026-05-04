@@ -183,6 +183,7 @@ function useFreeze() {
   if (player.activeWeapon !== 'permafrost') return;
   if (freezeCooldown > 0 || player.dead || afkMode || player.frozen) return;
   freezeCooldown = FREEZE_COOLDOWN;
+  playFreeze();
   const angle = player.turretAngle;
   const barrelLen = PLAYER_SIZE * 1.4;
   const bx = player.x + Math.cos(angle) * barrelLen;
@@ -363,6 +364,15 @@ dryfireAudio.volume = 0.6;
 function playDryfire() {
   const s = dryfireAudio.cloneNode();
   s.volume = 0.6;
+  s.play().catch(() => {});
+}
+
+const freezeAudio = new Audio('assets/freeze.mp3');
+freezeAudio.volume = 0.7;
+
+function playFreeze() {
+  const s = freezeAudio.cloneNode();
+  s.volume = 0.7;
   s.play().catch(() => {});
 }
 
