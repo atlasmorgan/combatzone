@@ -454,10 +454,26 @@ function touchPos(t) {
   return { x: t.clientX - r.left, y: t.clientY - r.top };
 }
 
+// Populated each frame by drawWeaponSwitcher(); checked by touchstart
+let weaponBtnRects = []; // { id, x, y, size }
+
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
   for (const t of e.changedTouches) {
     const { x, y } = touchPos(t);
+
+    // Check weapon / splatter buttons before joystick / aim
+    let hitBtn = false;
+    for (const btn of weaponBtnRects) {
+      if (x >= btn.x && x <= btn.x + btn.size && y >= btn.y && y <= btn.y + btn.size) {
+        if (btn.id === '__splatter__') useSplatter();
+        else switchWeapon(btn.id);
+        hitBtn = true;
+        break;
+      }
+    }
+    if (hitBtn) continue;
+
     if (x < canvas.width / 2) {
       if (!joystick.active) {
         Object.assign(joystick, {
@@ -1452,7 +1468,90 @@ function draw() {
   drawJoystick();
   drawMinimap();
   drawHUD();
+  drawWeaponSwitcher();
   drawScreenSplatters(); // always on top
+}
+
+// ──────────────────────────────────────────────────────────────────
+// DRAW — MOBILE WEAPON SWITCHER  (touch devices only)
+// ──────────────────────────────────────────────────────────────────
+const WEAPON_ORDER = ['ar', 'shotgun', 'burst', 'rpg', 'paintball'];
+const WEAPON_ABBR  = { ar: 'AR', shotgun: 'SHOT', burst: 'BRST', rpg: 'RPG', paintball: 'PNTBL' };
+
+function drawWeaponSwitcher() {
+  weaponBtnRects = [];
+  if (!navigator.maxTouchPoints || !connected) return;
+
+  const owned = loadStats().ownedGuns;
+  const available = WEAPON_ORDER.filter(id => owned.includes(id));
+  if (available.length <= 1) return;
+
+  const size = 52, gap = 8;
+  const totalW = available.length * (size + gap) - gap;
+  const startX = Math.round((canvas.width - totalW) / 2);
+  const btnY = 10;
+
+  for (let i = 0; i < available.length; i++) {
+    const id  = available[i];
+    const bx  = startX + i * (size + gap);
+    const active = player.activeWeapon === id;
+
+    weaponBtnRects.push({ id, x: bx, y: btnY, size });
+
+    ctx.save();
+    // Background
+    ctx.fillStyle   = active ? 'rgba(250,204,20,0.92)' : 'rgba(20,20,20,0.78)';
+    ctx.strokeStyle = active ? '#facc15' : '#555544';
+    ctx.lineWidth   = active ? 2.5 : 1.5;
+    ctx.beginPath();
+    ctx.roundRect(bx, btnY, size, size, 7);
+    ctx.fill(); ctx.stroke();
+
+    // Weapon abbreviation
+    ctx.fillStyle  = active ? '#111' : '#ccccaa';
+    ctx.font       = `bold ${id === 'paintball' ? 7 : 9}px monospace`;
+    ctx.textAlign  = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(WEAPON_ABBR[id], bx + size / 2, btnY + size * 0.38);
+
+    // Ammo remaining
+    const ammo = player.ammoByWeapon[id] ?? 0;
+    ctx.fillStyle = active ? '#333' : '#777766';
+    ctx.font = '8px monospace';
+    ctx.fillText(`${ammo}`, bx + size / 2, btnY + size * 0.68);
+
+    // Slot number hint
+    ctx.fillStyle = active ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.2)';
+    ctx.font = '8px monospace';
+    ctx.fillText(String(i + 1), bx + size - 8, btnY + 10);
+
+    ctx.restore();
+  }
+
+  // Blinding Splatter button — only when paintball is active
+  if (player.activeWeapon === 'paintball') {
+    const bx  = startX + available.length * (size + gap);
+    const ready = splatterCooldown <= 0;
+    weaponBtnRects.push({ id: '__splatter__', x: bx, y: btnY, size });
+
+    ctx.save();
+    ctx.fillStyle   = ready ? 'rgba(180,40,255,0.88)' : 'rgba(60,20,80,0.78)';
+    ctx.strokeStyle = ready ? '#dd44ff' : '#553366';
+    ctx.lineWidth   = ready ? 2.5 : 1.5;
+    ctx.beginPath();
+    ctx.roundRect(bx, btnY, size, size, 7);
+    ctx.fill(); ctx.stroke();
+
+    ctx.fillStyle    = ready ? '#fff' : '#aa88cc';
+    ctx.font         = 'bold 8px monospace';
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('★SPLAT', bx + size / 2, btnY + size * 0.38);
+    ctx.fillStyle = ready ? '#ffccff' : '#886699';
+    ctx.font = '8px monospace';
+    ctx.fillText(ready ? 'READY' : `${Math.ceil(splatterCooldown)}s`, bx + size / 2, btnY + size * 0.68);
+    ctx.restore();
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────
