@@ -273,9 +273,14 @@ function renderShopWeapons() {
   }).join('');
 }
 
+const purchaseAudio = new Audio('assets/purchase.mp3');
+purchaseAudio.volume = 0.6;
+
 function buyGun(id, cost) {
   const s = loadStats();
   if (s.ownedGuns.includes(id) || s.battleBucks < cost) return;
+  purchaseAudio.currentTime = 0;
+  purchaseAudio.play().catch(() => {});
   const newBucks = s.battleBucks - cost;
   saveStats({ battleBucks: newBucks, ownedGuns: [...s.ownedGuns, id] });
   syncToFirebase(auth.currentUser);
