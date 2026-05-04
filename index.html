@@ -24,7 +24,7 @@
   </script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { overflow: hidden; }
+    body { overflow-x: hidden; overflow-y: auto; }
 
     #intro-overlay {
       position: fixed; inset: 0; z-index: 9999;
@@ -45,7 +45,7 @@
     @keyframes introFadeOut { to   { opacity: 0; } }
   </style>
 </head>
-<body class="min-h-screen bg-gray-950 flex flex-col items-center justify-center p-6">
+<body class="min-h-screen bg-gray-950 flex flex-col items-center justify-start sm:justify-center px-4 py-10 sm:p-6">
 
   <!-- ── FLAME GAMES INTRO ─────────────────────────────────────── -->
   <div id="intro-overlay">
@@ -69,15 +69,15 @@
   </script>
 
   <!-- ── TITLE ─────────────────────────────────────────────────── -->
-  <h1 class="text-yellow-400 font-black text-4xl tracking-[0.3em] uppercase mb-1">
+  <h1 class="text-yellow-400 font-black text-2xl sm:text-4xl tracking-[0.12em] sm:tracking-[0.3em] uppercase mb-1 text-center w-full">
     ☠ COMBAT ZONE
   </h1>
-  <p class="text-gray-500 font-mono text-sm tracking-widest mb-10">
+  <p class="text-gray-500 font-mono text-xs sm:text-sm tracking-widest mb-8 sm:mb-10 text-center">
     Multiplayer Tank Arena
   </p>
 
   <!-- ── NAME INPUT ──────────────────────────────────────────────── -->
-  <div class="flex flex-col items-center gap-1 mb-8 w-full max-w-xs">
+  <div class="flex flex-col items-center gap-1 mb-6 w-full max-w-xs">
     <label class="text-gray-500 font-mono text-xs tracking-[0.2em] uppercase self-start">
       Your Name
     </label>
@@ -97,7 +97,7 @@
     id="hostBtn"
     class="bg-yellow-400 hover:bg-yellow-300 active:bg-yellow-500
            text-gray-950 font-black text-lg tracking-widest
-           px-10 py-4 rounded mb-12 transition-colors select-none"
+           w-full max-w-xs sm:w-auto px-10 py-4 rounded mb-4 transition-colors select-none"
     onclick="hostRoom()"
   >
     ▶ HOST A NEW ROOM
@@ -109,7 +109,7 @@
     class="bg-gray-800 hover:bg-gray-700 active:bg-gray-900
            border border-yellow-600 hover:border-yellow-400
            text-yellow-400 font-black text-sm tracking-widest
-           px-8 py-2 rounded mb-6 transition-colors select-none"
+           w-full max-w-xs sm:w-auto px-8 py-3 rounded mb-6 transition-colors select-none"
   >
     ⚔ BATTLE SHOP
   </button>
@@ -185,8 +185,9 @@
   </div>
 
   <!-- ── CONTROLS HINT ─────────────────────────────────────────── -->
-  <p class="text-gray-700 font-mono text-xs tracking-wider mt-12 text-center">
-    WASD — move &nbsp;|&nbsp; Mouse — aim &nbsp;|&nbsp; Click / Space — fire &nbsp;|&nbsp; R — reload
+  <p class="text-gray-700 font-mono text-xs tracking-wider mt-8 text-center leading-relaxed">
+    WASD — move &nbsp;|&nbsp; Mouse — aim<br class="sm:hidden"/>
+    &nbsp;|&nbsp; Click / Space — fire &nbsp;|&nbsp; R — reload
   </p>
 
   <!-- ── CAREER STATS ─────────────────────────────────────────── -->
