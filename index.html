@@ -131,7 +131,9 @@
       <!-- Balance -->
       <div class="px-6 py-3 border-b border-gray-800 flex items-center gap-2">
         <span class="text-gray-500 font-mono text-xs uppercase tracking-widest">Balance</span>
-        <span id="shopBucks" class="text-yellow-400 font-black text-lg ml-auto">◆ 0</span>
+        <span id="shopBucks" class="text-yellow-400 font-black text-lg ml-auto flex items-center gap-2">
+          <img src="assets/bb-icon.svg" class="w-7 h-7" alt="BB"/> 0
+        </span>
       </div>
 
       <!-- Weapons section -->
@@ -202,7 +204,9 @@
       <span class="text-gray-500">Best Streak</span>
       <span id="statStreak"  class="text-orange-400 text-right">0</span>
       <span class="text-gray-500">Battle Bucks</span>
-      <span id="statBucks"   class="text-yellow-400 text-right">◆ 0</span>
+      <span id="statBucks" class="text-yellow-400 text-right flex items-center justify-end gap-1">
+        <img src="assets/bb-icon.svg" class="inline w-4 h-4" alt="BB"/> 0
+      </span>
     </div>
   </div>
 
@@ -222,7 +226,10 @@ function renderStats() {
   document.getElementById('statDeaths').textContent  = s.totalDeaths;
   document.getElementById('statGames').textContent   = s.gamesPlayed;
   document.getElementById('statStreak').textContent  = s.bestKillStreak;
-  document.getElementById('statBucks').textContent   = '◆ ' + s.battleBucks;
+  const bucksEl = document.getElementById('statBucks');
+  const bucksImg = bucksEl.querySelector('img');
+  bucksEl.textContent = s.battleBucks;
+  if (bucksImg) bucksEl.prepend(bucksImg);
 }
 function syncToFirebase(user) {
   if (!user) return;
@@ -264,7 +271,10 @@ auth.onAuthStateChanged(user => {
 
 // ── Battle Shop ───────────────────────────────────────────────────
 function openShop() {
-  document.getElementById('shopBucks').textContent = '◆ ' + loadStats().battleBucks;
+  const el = document.getElementById('shopBucks');
+  const img = el.querySelector('img');
+  el.textContent = loadStats().battleBucks;
+  if (img) el.prepend(img);
   document.getElementById('shopOverlay').style.display = 'flex';
 }
 function closeShop() {

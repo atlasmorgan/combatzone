@@ -235,6 +235,12 @@ function spawnPlayer() {
 }
 
 // ──────────────────────────────────────────────────────────────────
+// ASSETS
+// ──────────────────────────────────────────────────────────────────
+const bbIcon = new Image();
+bbIcon.src = 'assets/bb-icon.svg';
+
+// ──────────────────────────────────────────────────────────────────
 // AUDIO
 // ──────────────────────────────────────────────────────────────────
 const arShootAudio = new Audio('assets/ar-shoot.mp3');
@@ -1194,8 +1200,9 @@ function drawHUD() {
     ctx.fillStyle='#88cc88'; ctx.font='bold 12px monospace';
     ctx.fillText(`[ ${player.weapon} ]`, ammoX+190, y+barH-2);
 
+    if (bbIcon.complete) ctx.drawImage(bbIcon, ammoX+310, y, 14, 14);
     ctx.fillStyle='#facc15'; ctx.font='bold 12px monospace';
-    ctx.fillText(`◆ ${loadStats().battleBucks} BB`, ammoX+310, y+barH-2);
+    ctx.fillText(`${loadStats().battleBucks} BB`, ammoX+327, y+barH-2);
 
     ctx.fillStyle='#ff6655'; ctx.font='bold 12px monospace';
     ctx.fillText(`KILLS  ${player.kills}`, ammoX+430, y+barH-2);

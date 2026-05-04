@@ -145,7 +145,7 @@ const httpServer = http.createServer((req, res) => {
     fs.readFile(file, (err, data) => {
       if (err) { res.writeHead(404); res.end('Not found'); return; }
       const ext = path.extname(safeName).toLowerCase();
-      const mime = { '.png': 'image/png', '.jpg': 'image/jpeg', '.wav': 'audio/wav', '.mp3': 'audio/mpeg' }[ext] || 'application/octet-stream';
+      const mime = { '.png': 'image/png', '.jpg': 'image/jpeg', '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.svg': 'image/svg+xml' }[ext] || 'application/octet-stream';
       res.writeHead(200, { 'Content-Type': mime });
       res.end(data);
     });
