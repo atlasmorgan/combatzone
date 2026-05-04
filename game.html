@@ -267,6 +267,15 @@ function playReload() {
   s.play().catch(() => {});
 }
 
+const explosionAudio = new Audio('assets/explosion.mp3');
+explosionAudio.volume = 0.6;
+
+function playExplosion() {
+  const s = explosionAudio.cloneNode();
+  s.volume = 0.6;
+  s.play().catch(() => {});
+}
+
 // ──────────────────────────────────────────────────────────────────
 // BULLETS  (local = fired by this client)
 // ──────────────────────────────────────────────────────────────────
@@ -816,7 +825,7 @@ function update(dt) {
         if (Math.sqrt(ddx*ddx + ddy*ddy) < PLAYER_SIZE + br) { remove = true; break; }
       }
     }
-    if (remove) bullets.splice(i, 1);
+    if (remove) { if (b.weapon === 'rpg') playExplosion(); bullets.splice(i, 1); }
   }
 
   // ── Move remote bullets; detect hit on local player or other remote players ──
@@ -845,6 +854,7 @@ function update(dt) {
         netSend({ type: 'hit', damage: dmg,
                   bulletId: b.id, killerId: b.ownerId });
       }
+      if (b.weapon === 'rpg') playExplosion();
       remoteBullets.splice(i, 1);
     }
   }
