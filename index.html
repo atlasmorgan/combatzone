@@ -244,10 +244,11 @@ auth.onAuthStateChanged(user => {
 
 // ── Battle Shop ───────────────────────────────────────────────────
 const SHOP_WEAPONS = [
-  { id: 'ar',      name: 'M4A1',        sub: 'Assault Rifle',             cost: 0  },
-  { id: 'shotgun', name: 'Shotgun',     sub: '95/20/5 dmg • close range', cost: 15 },
-  { id: 'burst',   name: 'Burst Rifle', sub: '75 dmg • burst fire',       cost: 25 },
-  { id: 'rpg',     name: 'RPG',         sub: '50 dmg • 3 shots',          cost: 30 },
+  { id: 'ar',        name: 'M4A1',          sub: 'Assault Rifle',             cost: 0   },
+  { id: 'shotgun',   name: 'Shotgun',        sub: '95/20/5 dmg • close range', cost: 15  },
+  { id: 'burst',     name: 'Burst Rifle',    sub: '75 dmg • burst fire',       cost: 25  },
+  { id: 'rpg',       name: 'RPG',            sub: '50 dmg • 3 shots',          cost: 30  },
+  { id: 'paintball', name: 'Paintball Gun',  sub: '22 dmg • rainbow shots',    cost: 100, prime: true },
 ];
 
 function renderShopWeapons() {
@@ -264,9 +265,15 @@ function renderShopWeapons() {
              BUY — ${w.cost} BB
            </button>`
         : `<span class="text-gray-600 font-mono text-xs mt-auto">${w.cost} BB</span>`;
+    const primeBadge = w.prime
+      ? `<span class="text-yellow-500 font-mono text-xs tracking-widest">★ PRIME</span>`
+      : '';
+    const nameColor = w.prime ? 'text-yellow-400' : 'text-white';
+    const borderColor = w.prime && !owned ? 'border-yellow-700/50' : owned ? 'border-gray-700' : 'border-gray-800';
     return `
-      <div class="bg-gray-800 border ${owned ? 'border-gray-700' : 'border-gray-800'} rounded p-3 flex flex-col items-center gap-2 ${owned ? '' : 'opacity-70'}">
-        <span class="text-white font-black text-sm tracking-wider">${w.name}</span>
+      <div class="bg-gray-800 border ${borderColor} rounded p-3 flex flex-col items-center gap-2 ${owned ? '' : 'opacity-70'}">
+        ${primeBadge}
+        <span class="${nameColor} font-black text-sm tracking-wider">${w.name}</span>
         <span class="text-gray-400 font-mono text-xs text-center">${w.sub}</span>
         ${action}
       </div>`;
