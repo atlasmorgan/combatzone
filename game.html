@@ -137,7 +137,7 @@ const NET_SEND_RATE   = 1/30;  // send position to server 30× per second
 
 const WEAPONS = {
   ar:  { name: 'Assault Rifle', damage: 8,  fireRate: 0.18, reloadTime: 1.2, magSize: 30, reserveSize: 240, bulletSpeed: 480, bulletRadius: 4, muzzleDuration: 0.07 },
-  rpg: { name: 'RPG',           damage: 50, fireRate: 1.8,  reloadTime: 2.5, magSize: 3,  reserveSize: 12,  bulletSpeed: 380, bulletRadius: 9, muzzleDuration: 0.18 },
+  rpg: { name: 'RPG',           damage: 50, fireRate: 1.8,  reloadTime: 2.5, magSize: 15, reserveSize: 60,  bulletSpeed: 380, bulletRadius: 9, muzzleDuration: 0.18 },
 };
 
 // ──────────────────────────────────────────────────────────────────
@@ -210,8 +210,8 @@ const player = {
   maxAmmo: 30,
   reserveAmmo: 240,
   activeWeapon: 'ar',
-  ammoByWeapon: { ar: 30, rpg: 3 },
-  reserveByWeapon: { ar: 240, rpg: 12 },
+  ammoByWeapon: { ar: 30, rpg: 15 },
+  reserveByWeapon: { ar: 240, rpg: 60 },
   weapon: 'Assault Rifle',
   kills: 0,
   fireCooldown: 0, // seconds until next shot is allowed
