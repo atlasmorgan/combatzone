@@ -281,6 +281,11 @@ wss.on('connection', (ws, req) => {
       case 'splatter':
         broadcastRoom(room, { type: 'splattered', id }, id);
         break;
+
+      // Permafrost special: relay freeze to ALL players (including victim who sent it)
+      case 'frozen':
+        broadcastRoomAll(room, { type: 'playerFrozen', id: msg.targetId ?? id, shooterId: msg.shooterId ?? null });
+        break;
     }
   });
 

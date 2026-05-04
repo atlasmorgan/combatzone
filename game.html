@@ -136,19 +136,24 @@ const WALL_DENSITY    = 0.20;  // fraction of interior tiles that are walls
 const NET_SEND_RATE   = 1/30;  // send position to server 30× per second
 
 const WEAPONS = {
-  ar:        { name: 'Assault Rifle', damage: 8,  fireRate: 0.18, reloadTime: 1.2, magSize: 30, reserveSize: 240, bulletSpeed: 480, bulletRadius: 4, muzzleDuration: 0.07 },
-  rpg:       { name: 'RPG',           damage: 50, fireRate: 1.8,  reloadTime: 2.5, magSize: 15, reserveSize: 60,  bulletSpeed: 380, bulletRadius: 9, muzzleDuration: 0.18 },
-  burst:     { name: 'Burst Rifle',   damage: 75, fireRate: 0.55, reloadTime: 1.8, magSize: 50, reserveSize: 150, bulletSpeed: 520, bulletRadius: 5, muzzleDuration: 0.06, burstCount: 3, burstDelay: 0.08 },
-  shotgun:   { name: 'Shotgun',       damage: 95, fireRate: 1.0,  reloadTime: 1.5, magSize: 6,  reserveSize: 24,  bulletSpeed: 350, bulletRadius: 3, muzzleDuration: 0.12, pelletCount: 6, spreadAngle: 0.20 },
-  paintball: { name: 'Paintball Gun', damage: 22, fireRate: 0.18, reloadTime: 1.2, magSize: 16, reserveSize: 96,  bulletSpeed: 480, bulletRadius: 4, muzzleDuration: 0.07 },
+  ar:          { name: 'Assault Rifle',    damage: 8,  fireRate: 0.18, reloadTime: 1.2, magSize: 30, reserveSize: 240, bulletSpeed: 480, bulletRadius: 4,  muzzleDuration: 0.07 },
+  rpg:         { name: 'RPG',              damage: 50, fireRate: 1.8,  reloadTime: 2.5, magSize: 15, reserveSize: 60,  bulletSpeed: 380, bulletRadius: 9,  muzzleDuration: 0.18 },
+  burst:       { name: 'Burst Rifle',      damage: 75, fireRate: 0.55, reloadTime: 1.8, magSize: 50, reserveSize: 150, bulletSpeed: 520, bulletRadius: 5,  muzzleDuration: 0.06, burstCount: 3, burstDelay: 0.08 },
+  shotgun:     { name: 'Shotgun',          damage: 95, fireRate: 1.0,  reloadTime: 1.5, magSize: 6,  reserveSize: 24,  bulletSpeed: 350, bulletRadius: 3,  muzzleDuration: 0.12, pelletCount: 6, spreadAngle: 0.20 },
+  paintball:   { name: 'Paintball Gun',    damage: 22, fireRate: 0.18, reloadTime: 1.2, magSize: 16, reserveSize: 96,  bulletSpeed: 480, bulletRadius: 4,  muzzleDuration: 0.07 },
+  permafrost:  { name: 'Permafrost Rifle', damage: 14, fireRate: 0.55, reloadTime: 1.8, magSize: 30, reserveSize: 120, bulletSpeed: 500, bulletRadius: 5,  muzzleDuration: 0.06, burstCount: 3, burstDelay: 0.08 },
 };
 
 const RAINBOW_COLORS = ['#ff3333','#ff8800','#ffee00','#44ff44','#00eeff','#4488ff','#cc44ff'];
 
 // ── Blinding Splatter state ───────────────────────────────────────
-let screenSplatters  = [];  // { x, y, r, color, drips:[{dx,dy,r}], life }
+let screenSplatters  = [];
 let splatterCooldown = 0;
 const SPLATTER_COOLDOWN = 15;
+
+// ── Permafrost Freeze state ───────────────────────────────────────
+let freezeCooldown = 0;
+const FREEZE_COOLDOWN = 20;
 
 function generateSplatters() {
   for (let i = 0; i < 14; i++) {
@@ -169,9 +174,25 @@ function generateSplatters() {
 
 function useSplatter() {
   if (player.activeWeapon !== 'paintball') return;
-  if (splatterCooldown > 0 || player.dead || afkMode) return;
+  if (splatterCooldown > 0 || player.dead || afkMode || player.frozen) return;
   splatterCooldown = SPLATTER_COOLDOWN;
   netSend({ type: 'splatter' });
+}
+
+function useFreeze() {
+  if (player.activeWeapon !== 'permafrost') return;
+  if (freezeCooldown > 0 || player.dead || afkMode || player.frozen) return;
+  freezeCooldown = FREEZE_COOLDOWN;
+  const angle = player.turretAngle;
+  const barrelLen = PLAYER_SIZE * 1.4;
+  const bx = player.x + Math.cos(angle) * barrelLen;
+  const by = player.y + Math.sin(angle) * barrelLen;
+  const speed = 260;
+  const bulletId = `${myId}_${nextBulletId++}`;
+  bullets.push({ id: bulletId, x: bx, y: by, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed,
+                 life: 3.5, weapon: 'freeze', damage: 0, radius: 11, ox: bx, oy: by });
+  netSend({ type: 'shoot', bullet: { id: bulletId, x: bx, y: by, vx: Math.cos(angle)*speed,
+                                     vy: Math.sin(angle)*speed, weapon: 'freeze', ox: bx, oy: by } });
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -244,10 +265,12 @@ const player = {
   maxAmmo: 30,
   reserveAmmo: 240,
   activeWeapon: 'ar',
-  ammoByWeapon: { ar: 30, rpg: 15, burst: 50, shotgun: 6, paintball: 16 },
-  reserveByWeapon: { ar: 240, rpg: 60, burst: 150, shotgun: 24, paintball: 96 },
+  ammoByWeapon: { ar: 30, rpg: 15, burst: 50, shotgun: 6, paintball: 16, permafrost: 30 },
+  reserveByWeapon: { ar: 240, rpg: 60, burst: 150, shotgun: 24, paintball: 96, permafrost: 120 },
   burstRemaining: 0,
   burstTimer: 0,
+  frozen: false,
+  freezeTimer: 0,
   weapon: 'Assault Rifle',
   kills: 0,
   fireCooldown: 0, // seconds until next shot is allowed
@@ -268,10 +291,12 @@ function spawnPlayer() {
   player.muzzleTimer  = 0;
   player.reloadTimer  = 0;
   player.dead         = false;
-  player.ammoByWeapon    = { ar: WEAPONS.ar.magSize,  rpg: WEAPONS.rpg.magSize,  burst: WEAPONS.burst.magSize,  shotgun: WEAPONS.shotgun.magSize,  paintball: WEAPONS.paintball.magSize };
-  player.reserveByWeapon = { ar: WEAPONS.ar.reserveSize, rpg: WEAPONS.rpg.reserveSize, burst: WEAPONS.burst.reserveSize, shotgun: WEAPONS.shotgun.reserveSize, paintball: WEAPONS.paintball.reserveSize };
+  player.ammoByWeapon    = { ar: WEAPONS.ar.magSize,  rpg: WEAPONS.rpg.magSize,  burst: WEAPONS.burst.magSize,  shotgun: WEAPONS.shotgun.magSize,  paintball: WEAPONS.paintball.magSize,  permafrost: WEAPONS.permafrost.magSize };
+  player.reserveByWeapon = { ar: WEAPONS.ar.reserveSize, rpg: WEAPONS.rpg.reserveSize, burst: WEAPONS.burst.reserveSize, shotgun: WEAPONS.shotgun.reserveSize, paintball: WEAPONS.paintball.reserveSize, permafrost: WEAPONS.permafrost.reserveSize };
   player.burstRemaining  = 0;
   player.burstTimer      = 0;
+  player.frozen          = false;
+  player.freezeTimer     = 0;
   const w = WEAPONS[player.activeWeapon];
   player.ammo        = player.ammoByWeapon[player.activeWeapon];
   player.reserveAmmo = player.reserveByWeapon[player.activeWeapon];
@@ -363,7 +388,7 @@ function spawnOneBullet(w, angleOffset = 0) {
 }
 
 function fireBullet() {
-  if (player.dead || afkMode)                               return;
+  if (player.dead || afkMode || player.frozen)              return;
   if (player.reloadTimer > 0 || player.fireCooldown > 0)   return;
   if (player.ammo <= 0)                                     return;
 
@@ -404,12 +429,13 @@ window.addEventListener('keydown', e => {
     e.preventDefault();
   if (e.code === 'Space')  fireBullet();
   if (e.code === 'KeyR')   startReload();
-  if (e.code === 'KeyE')   useSplatter();
+  if (e.code === 'KeyE')   { useSplatter(); useFreeze(); }
   if (e.code === 'Digit1') switchWeapon('ar');
   if (e.code === 'Digit2') switchWeapon('rpg');
   if (e.code === 'Digit3') switchWeapon('burst');
   if (e.code === 'Digit4') switchWeapon('shotgun');
   if (e.code === 'Digit5') switchWeapon('paintball');
+  if (e.code === 'Digit6') switchWeapon('permafrost');
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 
@@ -466,7 +492,7 @@ canvas.addEventListener('touchstart', e => {
     let hitBtn = false;
     for (const btn of weaponBtnRects) {
       if (x >= btn.x && x <= btn.x + btn.size && y >= btn.y && y <= btn.y + btn.size) {
-        if (btn.id === '__splatter__') useSplatter();
+        if (btn.id === '__special__') { useSplatter(); useFreeze(); }
         else switchWeapon(btn.id);
         hitBtn = true;
         break;
@@ -818,6 +844,17 @@ function handleMessage(msg) {
       generateSplatters();
       break;
 
+    // ── Permafrost Freeze applied to a player ──
+    case 'playerFrozen':
+      if (msg.id === myId) {
+        player.frozen = true;
+        player.freezeTimer = 10;
+      } else if (otherPlayers.has(msg.id)) {
+        const fp = otherPlayers.get(msg.id);
+        fp.frozen = true; fp.freezeTimer = 10;
+      }
+      break;
+
     // ── A player toggled AFK ──
     case 'afkChanged':
       if (otherPlayers.has(msg.id)) otherPlayers.get(msg.id).afk = msg.afk;
@@ -838,11 +875,14 @@ function handleMessage(msg) {
         player.reserveAmmo = 240;
         player.reloadTimer = 0;
         player.dead        = false;
+        player.frozen      = false;
+        player.freezeTimer = 0;
         hideOverlay();
         updateCamera();
       } else if (otherPlayers.has(msg.id)) {
         const p = otherPlayers.get(msg.id);
         p.x = msg.x; p.y = msg.y; p.health = 100; p.dead = false;
+        p.frozen = false; p.freezeTimer = 0;
       }
       break;
   }
@@ -872,9 +912,23 @@ function update(dt) {
   // While connecting or dead, nothing happens
   if (!connected || player.dead) return;
 
-  // ── Movement: WASD or joystick (locked in AFK mode) ──
+  // ── Tick local freeze timer ──
+  if (player.frozen) {
+    player.freezeTimer -= dt;
+    if (player.freezeTimer <= 0) { player.frozen = false; player.freezeTimer = 0; }
+  }
+
+  // ── Tick remote freeze timers ──
+  for (const [, rp] of otherPlayers) {
+    if (rp.frozen) {
+      rp.freezeTimer = (rp.freezeTimer ?? 0) - dt;
+      if (rp.freezeTimer <= 0) rp.frozen = false;
+    }
+  }
+
+  // ── Movement: WASD or joystick (locked in AFK / frozen mode) ──
   let dx = 0, dy = 0;
-  if (!afkMode) {
+  if (!afkMode && !player.frozen) {
     if (joystick.active) {
       dx = joystick.dx; dy = joystick.dy;
     } else {
@@ -930,7 +984,7 @@ function update(dt) {
   if (player.burstRemaining > 0) {
     player.burstTimer -= dt;
     if (player.burstTimer <= 0) {
-      if (player.ammo > 0 && !player.dead) {
+      if (player.ammo > 0 && !player.dead && !player.frozen) {
         const w = WEAPONS[player.activeWeapon];
         player.ammo--;
         player.muzzleTimer = w.muzzleDuration;
@@ -982,16 +1036,21 @@ function update(dt) {
 
     if (b.life <= 0 || wallHit || playerHit || remoteHit) {
       if (playerHit && !afkMode) {
-        netSend({ type: 'hit', damage: getBulletDamage(b, player.x, player.y),
-                  bulletId: b.id, killerId: b.ownerId });
+        if (b.weapon === 'freeze') {
+          netSend({ type: 'frozen', targetId: myId, shooterId: b.ownerId });
+        } else {
+          netSend({ type: 'hit', damage: getBulletDamage(b, player.x, player.y),
+                    bulletId: b.id, killerId: b.ownerId });
+        }
       }
       if (b.weapon === 'rpg') playExplosion();
       remoteBullets.splice(i, 1);
     }
   }
 
-  // ── Splatter cooldown + fade ──
+  // ── Special attack cooldowns ──
   if (splatterCooldown > 0) splatterCooldown = Math.max(0, splatterCooldown - dt);
+  if (freezeCooldown   > 0) freezeCooldown   = Math.max(0, freezeCooldown   - dt);
   for (let i = screenSplatters.length - 1; i >= 0; i--) {
     screenSplatters[i].life -= dt;
     if (screenSplatters[i].life <= 0) screenSplatters.splice(i, 1);
@@ -1110,6 +1169,57 @@ function drawMap() {
 }
 
 // ──────────────────────────────────────────────────────────────────
+// DRAW — ICE BLOCK (frozen players)
+// ──────────────────────────────────────────────────────────────────
+function drawIceBlock(sx, sy, timer) {
+  const w = PLAYER_SIZE * 3.6;
+  const h = PLAYER_SIZE * 3.2;
+  const pulse = 0.50 + 0.12 * Math.sin(Date.now() / 180);
+
+  ctx.save();
+
+  // Fill
+  ctx.globalAlpha = pulse;
+  ctx.fillStyle = '#99d4f8';
+  ctx.beginPath(); ctx.roundRect(sx - w/2, sy - h/2, w, h, 6); ctx.fill();
+
+  // Border
+  ctx.globalAlpha = Math.min(1, pulse + 0.2);
+  ctx.strokeStyle = '#cceeFF'; ctx.lineWidth = 2.5;
+  ctx.stroke();
+
+  // Snowflake crystal lines
+  ctx.globalAlpha = pulse * 0.65;
+  ctx.strokeStyle = '#e8f8ff'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  const cr = Math.min(w, h) * 0.36;
+  for (let i = 0; i < 6; i++) {
+    const a = (i * Math.PI) / 3;
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(sx + Math.cos(a) * cr, sy + Math.sin(a) * cr);
+  }
+  ctx.stroke();
+
+  // Tip dots
+  ctx.fillStyle = '#ffffff'; ctx.globalAlpha = pulse;
+  for (let i = 0; i < 6; i++) {
+    const a = (i * Math.PI) / 3;
+    ctx.beginPath();
+    ctx.arc(sx + Math.cos(a) * cr, sy + Math.sin(a) * cr, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Timer text
+  if (timer !== undefined) {
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#cceeff'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(`❄ ${Math.ceil(timer)}s`, sx, sy - h / 2 - 5);
+  }
+
+  ctx.restore();
+}
+
+// ──────────────────────────────────────────────────────────────────
 // DRAW — LOCAL PLAYER
 // ──────────────────────────────────────────────────────────────────
 function drawPlayer() {
@@ -1119,6 +1229,7 @@ function drawPlayer() {
 
   drawTank(sx, sy, player.bodyAngle, player.turretAngle,
            player.health, player.maxHealth, player.name, true, afkMode);
+  if (player.frozen) drawIceBlock(sx, sy, player.freezeTimer);
 
   // Muzzle flash — fades out over MUZZLE_DURATION seconds
   if (player.muzzleTimer > 0) {
@@ -1149,8 +1260,9 @@ function drawOtherPlayers() {
              p.health      ?? 100,
              100,
              p.name        ?? `P${id}`,
-             false /* enemy = red */,
+             false,
              p.afk ?? false);
+    if (p.frozen) drawIceBlock(sx, sy, p.freezeTimer);
   }
 }
 
@@ -1160,13 +1272,23 @@ function drawOtherPlayers() {
 function drawBullets(bulletList, defaultColor, defaultGlow) {
   for (const b of bulletList) {
     const sx = b.x - camera.x, sy = b.y - camera.y;
-    const isRpg       = b.weapon === 'rpg';
-    const isBurst     = b.weapon === 'burst';
-    const isShotgun   = b.weapon === 'shotgun';
-    const isPaintball = b.weapon === 'paintball';
+    const isRpg         = b.weapon === 'rpg';
+    const isBurst       = b.weapon === 'burst';
+    const isShotgun     = b.weapon === 'shotgun';
+    const isPaintball   = b.weapon === 'paintball';
+    const isPermafrost  = b.weapon === 'permafrost';
+    const isFreeze      = b.weapon === 'freeze';
     const r     = b.radius ?? 4;
-    const color = isRpg ? '#ff6600' : isBurst ? '#44ddff' : isShotgun ? '#ff3333' : (isPaintball && b.color) ? b.color : defaultColor;
-    const glow  = isRpg ? 'rgba(255,100,0,0.40)' : isBurst ? 'rgba(50,200,255,0.40)' : isShotgun ? 'rgba(255,50,50,0.35)' : (isPaintball && b.color) ? b.color + '66' : defaultGlow;
+    const color = isRpg ? '#ff6600' : isBurst ? '#44ddff' : isShotgun ? '#ff3333'
+                : (isPaintball && b.color) ? b.color
+                : isPermafrost ? '#88ddff'
+                : isFreeze     ? '#ddf4ff'
+                : defaultColor;
+    const glow  = isRpg ? 'rgba(255,100,0,0.40)' : isBurst ? 'rgba(50,200,255,0.40)' : isShotgun ? 'rgba(255,50,50,0.35)'
+                : (isPaintball && b.color) ? b.color + '66'
+                : isPermafrost ? 'rgba(100,200,255,0.40)'
+                : isFreeze     ? 'rgba(180,230,255,0.60)'
+                : defaultGlow;
     ctx.fillStyle = glow;
     ctx.beginPath(); ctx.arc(sx, sy, r + 3, 0, Math.PI*2); ctx.fill();
     ctx.fillStyle = color;
@@ -1396,6 +1518,15 @@ function drawHUD() {
       ctx.fillStyle = ready ? '#dd44ff' : '#664488';
       ctx.font = 'bold 9px monospace';
       ctx.fillText(ready ? '[E] BLINDING SPLATTER' : `[E] SPLATTER ${Math.ceil(splatterCooldown)}s`, ammoX+190, y - 3);
+    } else if (player.activeWeapon === 'permafrost') {
+      const ready = freezeCooldown <= 0;
+      ctx.fillStyle = ready ? '#66ccff' : '#224466';
+      ctx.font = 'bold 9px monospace';
+      ctx.fillText(ready ? '[E] ❄ FREEZE' : `[E] FREEZE ${Math.ceil(freezeCooldown)}s`, ammoX+190, y - 3);
+    }
+    if (player.frozen) {
+      ctx.fillStyle = '#88ddff'; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center';
+      ctx.fillText(`❄  FROZEN  ${Math.ceil(player.freezeTimer)}s  ❄`, canvas.width / 2, y - 6);
     }
 
     if (bbIcon.complete) ctx.drawImage(bbIcon, ammoX+310, y, 14, 14);
@@ -1475,8 +1606,13 @@ function draw() {
 // ──────────────────────────────────────────────────────────────────
 // DRAW — MOBILE WEAPON SWITCHER  (touch devices only)
 // ──────────────────────────────────────────────────────────────────
-const WEAPON_ORDER = ['ar', 'shotgun', 'burst', 'rpg', 'paintball'];
-const WEAPON_ABBR  = { ar: 'AR', shotgun: 'SHOT', burst: 'BRST', rpg: 'RPG', paintball: 'PNTBL' };
+const WEAPON_ORDER = ['ar', 'shotgun', 'burst', 'rpg', 'paintball', 'permafrost'];
+const WEAPON_ABBR  = { ar: 'AR', shotgun: 'SHOT', burst: 'BRST', rpg: 'RPG', paintball: 'PNTBL', permafrost: 'PRMFR' };
+
+const WEAPON_SPECIALS = {
+  paintball:  { label: '★SPLAT',  ready: () => splatterCooldown <= 0, cd: () => splatterCooldown, color: 'rgba(180,40,255,0.88)', dimColor: 'rgba(60,20,80,0.78)', stroke: '#dd44ff', dimStroke: '#553366' },
+  permafrost: { label: '❄FREEZE', ready: () => freezeCooldown   <= 0, cd: () => freezeCooldown,   color: 'rgba(20,110,220,0.88)', dimColor: 'rgba(10,30,80,0.78)',  stroke: '#66ccff', dimStroke: '#224466' },
+};
 
 function drawWeaponSwitcher() {
   weaponBtnRects = [];
@@ -1528,28 +1664,27 @@ function drawWeaponSwitcher() {
     ctx.restore();
   }
 
-  // Blinding Splatter button — only when paintball is active
-  if (player.activeWeapon === 'paintball') {
-    const bx  = startX + available.length * (size + gap);
-    const ready = splatterCooldown <= 0;
-    weaponBtnRects.push({ id: '__splatter__', x: bx, y: btnY, size });
+  // Special attack button — shown for any weapon that has one
+  const spec = WEAPON_SPECIALS[player.activeWeapon];
+  if (spec) {
+    const bx    = startX + available.length * (size + gap);
+    const ready = spec.ready();
+    weaponBtnRects.push({ id: '__special__', x: bx, y: btnY, size });
 
     ctx.save();
-    ctx.fillStyle   = ready ? 'rgba(180,40,255,0.88)' : 'rgba(60,20,80,0.78)';
-    ctx.strokeStyle = ready ? '#dd44ff' : '#553366';
+    ctx.fillStyle   = ready ? spec.color    : spec.dimColor;
+    ctx.strokeStyle = ready ? spec.stroke   : spec.dimStroke;
     ctx.lineWidth   = ready ? 2.5 : 1.5;
-    ctx.beginPath();
-    ctx.roundRect(bx, btnY, size, size, 7);
-    ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.roundRect(bx, btnY, size, size, 7); ctx.fill(); ctx.stroke();
 
-    ctx.fillStyle    = ready ? '#fff' : '#aa88cc';
+    ctx.fillStyle    = ready ? '#fff' : '#aabbcc';
     ctx.font         = 'bold 8px monospace';
     ctx.textAlign    = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('★SPLAT', bx + size / 2, btnY + size * 0.38);
-    ctx.fillStyle = ready ? '#ffccff' : '#886699';
+    ctx.fillText(spec.label, bx + size / 2, btnY + size * 0.38);
+    ctx.fillStyle = ready ? '#eef8ff' : '#667788';
     ctx.font = '8px monospace';
-    ctx.fillText(ready ? 'READY' : `${Math.ceil(splatterCooldown)}s`, bx + size / 2, btnY + size * 0.68);
+    ctx.fillText(ready ? 'READY' : `${Math.ceil(spec.cd())}s`, bx + size / 2, btnY + size * 0.68);
     ctx.restore();
   }
 }
