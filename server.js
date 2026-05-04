@@ -253,7 +253,7 @@ wss.on('connection', (ws, req) => {
       case 'hit': {
         if (p.health <= 0) break; // already dead — ignore duplicate hits
 
-        p.health = Math.max(0, p.health - (msg.damage || 0));
+        p.health = Math.max(0, p.health - Math.round(msg.damage || 0));
 
         // Broadcast the new health to all players in the room
         broadcastRoomAll(room, { type: 'damaged', id, health: p.health });
