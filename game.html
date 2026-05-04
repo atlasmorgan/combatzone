@@ -136,9 +136,10 @@ const WALL_DENSITY    = 0.20;  // fraction of interior tiles that are walls
 const NET_SEND_RATE   = 1/30;  // send position to server 30× per second
 
 const WEAPONS = {
-  ar:    { name: 'Assault Rifle', damage: 8,  fireRate: 0.18, reloadTime: 1.2, magSize: 30, reserveSize: 240, bulletSpeed: 480, bulletRadius: 4, muzzleDuration: 0.07 },
-  rpg:   { name: 'RPG',           damage: 50, fireRate: 1.8,  reloadTime: 2.5, magSize: 15, reserveSize: 60,  bulletSpeed: 380, bulletRadius: 9, muzzleDuration: 0.18 },
-  burst: { name: 'Burst Rifle',   damage: 75, fireRate: 0.55, reloadTime: 1.8, magSize: 50, reserveSize: 150, bulletSpeed: 520, bulletRadius: 5, muzzleDuration: 0.06, burstCount: 3, burstDelay: 0.08 },
+  ar:      { name: 'Assault Rifle', damage: 8,  fireRate: 0.18, reloadTime: 1.2, magSize: 30, reserveSize: 240, bulletSpeed: 480, bulletRadius: 4, muzzleDuration: 0.07 },
+  rpg:     { name: 'RPG',           damage: 50, fireRate: 1.8,  reloadTime: 2.5, magSize: 15, reserveSize: 60,  bulletSpeed: 380, bulletRadius: 9, muzzleDuration: 0.18 },
+  burst:   { name: 'Burst Rifle',   damage: 75, fireRate: 0.55, reloadTime: 1.8, magSize: 50, reserveSize: 150, bulletSpeed: 520, bulletRadius: 5, muzzleDuration: 0.06, burstCount: 3, burstDelay: 0.08 },
+  shotgun: { name: 'Shotgun',       damage: 95, fireRate: 1.0,  reloadTime: 1.5, magSize: 6,  reserveSize: 24,  bulletSpeed: 350, bulletRadius: 3, muzzleDuration: 0.12, pelletCount: 6, spreadAngle: 0.20 },
 };
 
 // ──────────────────────────────────────────────────────────────────
@@ -211,8 +212,8 @@ const player = {
   maxAmmo: 30,
   reserveAmmo: 240,
   activeWeapon: 'ar',
-  ammoByWeapon: { ar: 30, rpg: 15, burst: 50 },
-  reserveByWeapon: { ar: 240, rpg: 60, burst: 150 },
+  ammoByWeapon: { ar: 30, rpg: 15, burst: 50, shotgun: 6 },
+  reserveByWeapon: { ar: 240, rpg: 60, burst: 150, shotgun: 24 },
   burstRemaining: 0,
   burstTimer: 0,
   weapon: 'Assault Rifle',
@@ -235,8 +236,8 @@ function spawnPlayer() {
   player.muzzleTimer  = 0;
   player.reloadTimer  = 0;
   player.dead         = false;
-  player.ammoByWeapon    = { ar: WEAPONS.ar.magSize,  rpg: WEAPONS.rpg.magSize,  burst: WEAPONS.burst.magSize };
-  player.reserveByWeapon = { ar: WEAPONS.ar.reserveSize, rpg: WEAPONS.rpg.reserveSize, burst: WEAPONS.burst.reserveSize };
+  player.ammoByWeapon    = { ar: WEAPONS.ar.magSize,  rpg: WEAPONS.rpg.magSize,  burst: WEAPONS.burst.magSize,  shotgun: WEAPONS.shotgun.magSize };
+  player.reserveByWeapon = { ar: WEAPONS.ar.reserveSize, rpg: WEAPONS.rpg.reserveSize, burst: WEAPONS.burst.reserveSize, shotgun: WEAPONS.shotgun.reserveSize };
   player.burstRemaining  = 0;
   player.burstTimer      = 0;
   const w = WEAPONS[player.activeWeapon];
@@ -296,15 +297,16 @@ function startReload() {
   playReload();
 }
 
-function spawnOneBullet(w) {
+function spawnOneBullet(w, angleOffset = 0) {
+  const angle = player.turretAngle + angleOffset;
   const barrelLen = PLAYER_SIZE * 1.4;
-  const bx  = player.x + Math.cos(player.turretAngle) * barrelLen;
-  const by  = player.y + Math.sin(player.turretAngle) * barrelLen;
-  const bvx = Math.cos(player.turretAngle) * w.bulletSpeed;
-  const bvy = Math.sin(player.turretAngle) * w.bulletSpeed;
+  const bx  = player.x + Math.cos(angle) * barrelLen;
+  const by  = player.y + Math.sin(angle) * barrelLen;
+  const bvx = Math.cos(angle) * w.bulletSpeed;
+  const bvy = Math.sin(angle) * w.bulletSpeed;
   const bulletId = `${myId}_${nextBulletId++}`;
-  bullets.push({ id: bulletId, x: bx, y: by, vx: bvx, vy: bvy, life: 2.5, weapon: player.activeWeapon, damage: w.damage, radius: w.bulletRadius });
-  netSend({ type: 'shoot', bullet: { id: bulletId, x: bx, y: by, vx: bvx, vy: bvy, weapon: player.activeWeapon } });
+  bullets.push({ id: bulletId, x: bx, y: by, vx: bvx, vy: bvy, life: 2.5, weapon: player.activeWeapon, damage: w.damage, radius: w.bulletRadius, ox: bx, oy: by });
+  netSend({ type: 'shoot', bullet: { id: bulletId, x: bx, y: by, vx: bvx, vy: bvy, weapon: player.activeWeapon, ox: bx, oy: by } });
 }
 
 function fireBullet() {
@@ -316,9 +318,16 @@ function fireBullet() {
   player.ammo--;
   player.fireCooldown = w.fireRate;
   player.muzzleTimer  = w.muzzleDuration;
-  if (player.activeWeapon === 'ar' || player.activeWeapon === 'burst') playArShoot();
+  if (player.activeWeapon !== 'rpg') playArShoot();
 
-  spawnOneBullet(w);
+  if (w.pelletCount && w.pelletCount > 1) {
+    for (let i = 0; i < w.pelletCount; i++) {
+      const offset = (i / (w.pelletCount - 1) - 0.5) * (w.spreadAngle ?? 0) * 2;
+      spawnOneBullet(w, offset);
+    }
+  } else {
+    spawnOneBullet(w);
+  }
 
   if (w.burstCount && w.burstCount > 1) {
     player.burstRemaining = w.burstCount - 1;
@@ -343,6 +352,7 @@ window.addEventListener('keydown', e => {
   if (e.code === 'Digit1') switchWeapon('ar');
   if (e.code === 'Digit2') switchWeapon('rpg');
   if (e.code === 'Digit3') switchWeapon('burst');
+  if (e.code === 'Digit4') switchWeapon('shotgun');
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 
@@ -765,6 +775,18 @@ function refreshPlayerCount() {
   document.getElementById('playerCount').textContent = `● ${total} online`;
 }
 
+// Distance-based damage for shotgun; fixed damage for all other weapons
+function getBulletDamage(b, tx, ty) {
+  if (b.weapon === 'shotgun' && b.ox !== undefined) {
+    const dx = tx - b.ox, dy = ty - b.oy;
+    const tiles = Math.sqrt(dx*dx + dy*dy) / TILE_SIZE;
+    if (tiles <= 5)  return 95;
+    if (tiles <= 10) return 20;
+    return 5;
+  }
+  return b.damage ?? WEAPONS.ar.damage;
+}
+
 // ──────────────────────────────────────────────────────────────────
 // UPDATE  — called every frame
 // ──────────────────────────────────────────────────────────────────
@@ -882,8 +904,7 @@ function update(dt) {
 
     if (b.life <= 0 || wallHit || playerHit || remoteHit) {
       if (playerHit && !afkMode) {
-        const dmg = b.damage ?? WEAPONS.ar.damage;
-        netSend({ type: 'hit', damage: dmg,
+        netSend({ type: 'hit', damage: getBulletDamage(b, player.x, player.y),
                   bulletId: b.id, killerId: b.ownerId });
       }
       if (b.weapon === 'rpg') playExplosion();
@@ -1054,11 +1075,12 @@ function drawOtherPlayers() {
 function drawBullets(bulletList, defaultColor, defaultGlow) {
   for (const b of bulletList) {
     const sx = b.x - camera.x, sy = b.y - camera.y;
-    const isRpg   = b.weapon === 'rpg';
-    const isBurst = b.weapon === 'burst';
+    const isRpg     = b.weapon === 'rpg';
+    const isBurst   = b.weapon === 'burst';
+    const isShotgun = b.weapon === 'shotgun';
     const r     = b.radius ?? 4;
-    const color = isRpg ? '#ff6600' : isBurst ? '#44ddff' : defaultColor;
-    const glow  = isRpg ? 'rgba(255,100,0,0.40)' : isBurst ? 'rgba(50,200,255,0.40)' : defaultGlow;
+    const color = isRpg ? '#ff6600' : isBurst ? '#44ddff' : isShotgun ? '#ff3333' : defaultColor;
+    const glow  = isRpg ? 'rgba(255,100,0,0.40)' : isBurst ? 'rgba(50,200,255,0.40)' : isShotgun ? 'rgba(255,50,50,0.35)' : defaultGlow;
     ctx.fillStyle = glow;
     ctx.beginPath(); ctx.arc(sx, sy, r + 3, 0, Math.PI*2); ctx.fill();
     ctx.fillStyle = color;
