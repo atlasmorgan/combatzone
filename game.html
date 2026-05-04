@@ -177,7 +177,17 @@ function useSplatter() {
   if (splatterCooldown > 0 || player.dead || afkMode || player.frozen) return;
   splatterCooldown = SPLATTER_COOLDOWN;
   playSplatter();
-  netSend({ type: 'splatter' });
+  const angle = player.turretAngle;
+  const barrelLen = PLAYER_SIZE * 1.4;
+  const bx = player.x + Math.cos(angle) * barrelLen;
+  const by = player.y + Math.sin(angle) * barrelLen;
+  const speed = 280;
+  const color = RAINBOW_COLORS[Math.floor(Math.random() * RAINBOW_COLORS.length)];
+  const bulletId = `${myId}_${nextBulletId++}`;
+  bullets.push({ id: bulletId, x: bx, y: by, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed,
+                 life: 3.0, weapon: 'paintbomb', damage: 0, radius: 14, ox: bx, oy: by, color });
+  netSend({ type: 'shoot', bullet: { id: bulletId, x: bx, y: by, vx: Math.cos(angle)*speed,
+                                     vy: Math.sin(angle)*speed, weapon: 'paintbomb', ox: bx, oy: by, color } });
 }
 
 function useFreeze() {
@@ -878,6 +888,11 @@ function handleMessage(msg) {
       generateSplatters();
       break;
 
+    // ── Paintbomb targeted splatter ──
+    case 'playerSplattered':
+      if (msg.id === myId) generateSplatters();
+      break;
+
     // ── Permafrost Freeze applied to a player ──
     case 'playerFrozen':
       if (msg.id === myId) {
@@ -1073,6 +1088,8 @@ function update(dt) {
       if (playerHit && !afkMode) {
         if (b.weapon === 'freeze') {
           netSend({ type: 'frozen', targetId: myId, shooterId: b.ownerId });
+        } else if (b.weapon === 'paintbomb') {
+          netSend({ type: 'paintHit', targetId: myId, shooterId: b.ownerId });
         } else {
           netSend({ type: 'hit', damage: getBulletDamage(b, player.x, player.y),
                     bulletId: b.id, killerId: b.ownerId });
@@ -1311,16 +1328,19 @@ function drawBullets(bulletList, defaultColor, defaultGlow) {
     const isBurst       = b.weapon === 'burst';
     const isShotgun     = b.weapon === 'shotgun';
     const isPaintball   = b.weapon === 'paintball';
+    const isPaintbomb   = b.weapon === 'paintbomb';
     const isPermafrost  = b.weapon === 'permafrost';
     const isFreeze      = b.weapon === 'freeze';
     const r     = b.radius ?? 4;
     const color = isRpg ? '#ff6600' : isBurst ? '#44ddff' : isShotgun ? '#ff3333'
                 : (isPaintball && b.color) ? b.color
+                : isPaintbomb  ? (b.color || '#ff44cc')
                 : isPermafrost ? '#88ddff'
                 : isFreeze     ? '#ddf4ff'
                 : defaultColor;
     const glow  = isRpg ? 'rgba(255,100,0,0.40)' : isBurst ? 'rgba(50,200,255,0.40)' : isShotgun ? 'rgba(255,50,50,0.35)'
                 : (isPaintball && b.color) ? b.color + '66'
+                : isPaintbomb  ? (b.color || '#ff44cc') + '99'
                 : isPermafrost ? 'rgba(100,200,255,0.40)'
                 : isFreeze     ? 'rgba(180,230,255,0.60)'
                 : defaultGlow;

@@ -286,6 +286,11 @@ wss.on('connection', (ws, req) => {
       case 'frozen':
         broadcastRoomAll(room, { type: 'playerFrozen', id: msg.targetId ?? id, shooterId: msg.shooterId ?? null });
         break;
+
+      // Paintball special: targeted splatter on the hit player
+      case 'paintHit':
+        broadcastRoomAll(room, { type: 'playerSplattered', id: msg.targetId ?? id });
+        break;
     }
   });
 
