@@ -145,6 +145,35 @@ const WEAPONS = {
 
 const RAINBOW_COLORS = ['#ff3333','#ff8800','#ffee00','#44ff44','#00eeff','#4488ff','#cc44ff'];
 
+// ── Blinding Splatter state ───────────────────────────────────────
+let screenSplatters  = [];  // { x, y, r, color, drips:[{dx,dy,r}], life }
+let splatterCooldown = 0;
+const SPLATTER_COOLDOWN = 15;
+
+function generateSplatters() {
+  for (let i = 0; i < 14; i++) {
+    const color = RAINBOW_COLORS[Math.floor(Math.random() * RAINBOW_COLORS.length)];
+    const x = Math.random() * canvas.width;
+    const y = Math.random() * canvas.height;
+    const r = 18 + Math.random() * 44;
+    const drips = [];
+    const n = 4 + Math.floor(Math.random() * 6);
+    for (let j = 0; j < n; j++) {
+      const a = Math.random() * Math.PI * 2;
+      const d = r * (0.7 + Math.random() * 1.1);
+      drips.push({ dx: Math.cos(a) * d, dy: Math.sin(a) * d, r: r * (0.15 + Math.random() * 0.45) });
+    }
+    screenSplatters.push({ x, y, r, color, drips, life: 5.0 });
+  }
+}
+
+function useSplatter() {
+  if (player.activeWeapon !== 'paintball') return;
+  if (splatterCooldown > 0 || player.dead || afkMode) return;
+  splatterCooldown = SPLATTER_COOLDOWN;
+  netSend({ type: 'splatter' });
+}
+
 // ──────────────────────────────────────────────────────────────────
 // CANVAS SETUP
 // ──────────────────────────────────────────────────────────────────
@@ -375,6 +404,7 @@ window.addEventListener('keydown', e => {
     e.preventDefault();
   if (e.code === 'Space')  fireBullet();
   if (e.code === 'KeyR')   startReload();
+  if (e.code === 'KeyE')   useSplatter();
   if (e.code === 'Digit1') switchWeapon('ar');
   if (e.code === 'Digit2') switchWeapon('rpg');
   if (e.code === 'Digit3') switchWeapon('burst');
@@ -767,6 +797,11 @@ function handleMessage(msg) {
       }
       break;
 
+    // ── Paintball Blinding Splatter hit us ──
+    case 'splattered':
+      generateSplatters();
+      break;
+
     // ── A player toggled AFK ──
     case 'afkChanged':
       if (otherPlayers.has(msg.id)) otherPlayers.get(msg.id).afk = msg.afk;
@@ -937,6 +972,13 @@ function update(dt) {
       if (b.weapon === 'rpg') playExplosion();
       remoteBullets.splice(i, 1);
     }
+  }
+
+  // ── Splatter cooldown + fade ──
+  if (splatterCooldown > 0) splatterCooldown = Math.max(0, splatterCooldown - dt);
+  for (let i = screenSplatters.length - 1; i >= 0; i--) {
+    screenSplatters[i].life -= dt;
+    if (screenSplatters[i].life <= 0) screenSplatters.splice(i, 1);
   }
 
   // ── Camera ──
@@ -1333,6 +1375,13 @@ function drawHUD() {
     ctx.fillStyle='#88cc88'; ctx.font='bold 12px monospace';
     ctx.fillText(`[ ${player.weapon} ]`, ammoX+190, y+barH-2);
 
+    if (player.activeWeapon === 'paintball') {
+      const ready = splatterCooldown <= 0;
+      ctx.fillStyle = ready ? '#dd44ff' : '#664488';
+      ctx.font = 'bold 9px monospace';
+      ctx.fillText(ready ? '[E] BLINDING SPLATTER' : `[E] SPLATTER ${Math.ceil(splatterCooldown)}s`, ammoX+190, y - 3);
+    }
+
     if (bbIcon.complete) ctx.drawImage(bbIcon, ammoX+310, y, 14, 14);
     ctx.fillStyle='#facc15'; ctx.font='bold 12px monospace';
     ctx.fillText(`${loadStats().battleBucks} BB`, ammoX+327, y+barH-2);
@@ -1403,6 +1452,25 @@ function draw() {
   drawJoystick();
   drawMinimap();
   drawHUD();
+  drawScreenSplatters(); // always on top
+}
+
+// ──────────────────────────────────────────────────────────────────
+// DRAW — BLINDING SPLATTER  (screen-space, drawn last / on top)
+// ──────────────────────────────────────────────────────────────────
+function drawScreenSplatters() {
+  for (const s of screenSplatters) {
+    // Fully opaque for 4 s, then fade over the last 1 s
+    const alpha = s.life < 1 ? s.life : 1.0;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = s.color;
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill();
+    for (const d of s.drips) {
+      ctx.beginPath(); ctx.arc(s.x + d.dx, s.y + d.dy, d.r, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────

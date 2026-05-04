@@ -276,6 +276,11 @@ wss.on('connection', (ws, req) => {
         }
         break;
       }
+
+      // Paintball special: relay to all other players in the room
+      case 'splatter':
+        broadcastRoom(room, { type: 'splattered', id }, id);
+        break;
     }
   });
 
