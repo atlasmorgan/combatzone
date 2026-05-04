@@ -371,6 +371,7 @@ function playDryfire() {
 // ──────────────────────────────────────────────────────────────────
 let bullets      = [];
 let nextBulletId = 0; // ever-incrementing so each bullet has a unique string ID
+let dryfireTimer = 0;
 
 function startReload() {
   const w = WEAPONS[player.activeWeapon];
@@ -398,11 +399,12 @@ function spawnOneBullet(w, angleOffset = 0) {
 
 function fireBullet() {
   if (player.dead || afkMode || player.frozen)              return;
-  if (player.reloadTimer > 0 || player.fireCooldown > 0)   return;
-  if (player.ammo <= 0) {
-    if (player.reserveAmmo <= 0) { playDryfire(); player.fireCooldown = 0.4; }
+  if (player.ammo <= 0 && player.reserveAmmo <= 0 && player.reloadTimer <= 0) {
+    if (dryfireTimer <= 0) { playDryfire(); dryfireTimer = 0.5; }
     return;
   }
+  if (player.reloadTimer > 0 || player.fireCooldown > 0)   return;
+  if (player.ammo <= 0)                                     return;
 
   const w = WEAPONS[player.activeWeapon];
   player.ammo--;
@@ -977,6 +979,7 @@ function update(dt) {
   // ── Timers ──
   player.fireCooldown = Math.max(0, player.fireCooldown - dt);
   player.muzzleTimer  = Math.max(0, player.muzzleTimer  - dt);
+  dryfireTimer        = Math.max(0, dryfireTimer - dt);
 
   // Reload countdown
   if (player.reloadTimer > 0) {
