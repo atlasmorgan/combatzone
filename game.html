@@ -357,6 +357,15 @@ function playPaintball() {
   s.play().catch(() => {});
 }
 
+const dryfireAudio = new Audio('assets/dryfire.mp3');
+dryfireAudio.volume = 0.6;
+
+function playDryfire() {
+  const s = dryfireAudio.cloneNode();
+  s.volume = 0.6;
+  s.play().catch(() => {});
+}
+
 // ──────────────────────────────────────────────────────────────────
 // BULLETS  (local = fired by this client)
 // ──────────────────────────────────────────────────────────────────
@@ -390,7 +399,10 @@ function spawnOneBullet(w, angleOffset = 0) {
 function fireBullet() {
   if (player.dead || afkMode || player.frozen)              return;
   if (player.reloadTimer > 0 || player.fireCooldown > 0)   return;
-  if (player.ammo <= 0)                                     return;
+  if (player.ammo <= 0) {
+    if (player.reserveAmmo <= 0) { playDryfire(); player.fireCooldown = 0.4; }
+    return;
+  }
 
   const w = WEAPONS[player.activeWeapon];
   player.ammo--;
