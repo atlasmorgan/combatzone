@@ -133,13 +133,12 @@ const MAP_ROWS        = 50;    // tile rows in the map
 const PLAYER_SPEED    = 200;   // px per second
 const PLAYER_SIZE     = 14;    // tank hull half-width (pixels)
 const WALL_DENSITY    = 0.20;  // fraction of interior tiles that are walls
-const BULLET_DAMAGE   = 8;     // HP removed per bullet hit
-const BULLET_SPEED    = 480;   // px per second
-const BULLET_RADIUS   = 4;     // visual size of a bullet
-const FIRE_RATE       = 0.18;  // seconds between shots (lower = faster)
-const MUZZLE_DURATION = 0.07;  // seconds the muzzle flash stays visible
-const RELOAD_TIME     = 1.2;   // seconds to reload a magazine
 const NET_SEND_RATE   = 1/30;  // send position to server 30× per second
+
+const WEAPONS = {
+  ar:  { name: 'Assault Rifle', damage: 8,  fireRate: 0.18, reloadTime: 1.2, magSize: 30, reserveSize: 240, bulletSpeed: 480, bulletRadius: 4, muzzleDuration: 0.07 },
+  rpg: { name: 'RPG',           damage: 50, fireRate: 1.8,  reloadTime: 2.5, magSize: 3,  reserveSize: 12,  bulletSpeed: 380, bulletRadius: 9, muzzleDuration: 0.18 },
+};
 
 // ──────────────────────────────────────────────────────────────────
 // CANVAS SETUP
@@ -210,6 +209,9 @@ const player = {
   ammo: 30,
   maxAmmo: 30,
   reserveAmmo: 240,
+  activeWeapon: 'ar',
+  ammoByWeapon: { ar: 30, rpg: 3 },
+  reserveByWeapon: { ar: 240, rpg: 12 },
   weapon: 'Assault Rifle',
   kills: 0,
   fireCooldown: 0, // seconds until next shot is allowed
@@ -223,8 +225,6 @@ function spawnPlayer() {
   player.x = (MAP_COLS/2)*TILE_SIZE + TILE_SIZE/2;
   player.y = (MAP_ROWS/2)*TILE_SIZE + TILE_SIZE/2;
   player.health      = player.maxHealth;
-  player.ammo        = player.maxAmmo;
-  player.reserveAmmo = 240;
   player.kills       = 0;
   player.bodyAngle   = 0;
   player.turretAngle = 0;
@@ -232,6 +232,12 @@ function spawnPlayer() {
   player.muzzleTimer  = 0;
   player.reloadTimer  = 0;
   player.dead         = false;
+  player.ammoByWeapon    = { ar: WEAPONS.ar.magSize,  rpg: WEAPONS.rpg.magSize };
+  player.reserveByWeapon = { ar: WEAPONS.ar.reserveSize, rpg: WEAPONS.rpg.reserveSize };
+  const w = WEAPONS[player.activeWeapon];
+  player.ammo        = player.ammoByWeapon[player.activeWeapon];
+  player.reserveAmmo = player.reserveByWeapon[player.activeWeapon];
+  player.maxAmmo     = w.magSize;
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -268,10 +274,11 @@ let bullets      = [];
 let nextBulletId = 0; // ever-incrementing so each bullet has a unique string ID
 
 function startReload() {
-  if (player.reloadTimer > 0)         return; // already reloading
-  if (player.ammo === player.maxAmmo) return; // mag already full
-  if (player.reserveAmmo <= 0)        return; // nothing left to load
-  player.reloadTimer = RELOAD_TIME;
+  const w = WEAPONS[player.activeWeapon];
+  if (player.reloadTimer > 0)      return; // already reloading
+  if (player.ammo === w.magSize)   return; // mag already full
+  if (player.reserveAmmo <= 0)     return; // nothing left to load
+  player.reloadTimer = w.reloadTime;
   playReload();
 }
 
@@ -280,24 +287,23 @@ function fireBullet() {
   if (player.reloadTimer > 0 || player.fireCooldown > 0)   return;
   if (player.ammo <= 0)                                     return;
 
+  const w = WEAPONS[player.activeWeapon];
   player.ammo--;
-  player.fireCooldown = FIRE_RATE;
-  player.muzzleTimer  = MUZZLE_DURATION;
-  playArShoot();
+  player.fireCooldown = w.fireRate;
+  player.muzzleTimer  = w.muzzleDuration;
+  if (player.activeWeapon === 'ar') playArShoot();
 
-  // Spawn point = just beyond the end of the gun barrel
   const barrelLen = PLAYER_SIZE * 1.4;
   const bx  = player.x + Math.cos(player.turretAngle) * barrelLen;
   const by  = player.y + Math.sin(player.turretAngle) * barrelLen;
-  const bvx = Math.cos(player.turretAngle) * BULLET_SPEED;
-  const bvy = Math.sin(player.turretAngle) * BULLET_SPEED;
+  const bvx = Math.cos(player.turretAngle) * w.bulletSpeed;
+  const bvy = Math.sin(player.turretAngle) * w.bulletSpeed;
   const bulletId = `${myId}_${nextBulletId++}`;
 
-  bullets.push({ id: bulletId, x: bx, y: by, vx: bvx, vy: bvy, life: 2.0 });
+  bullets.push({ id: bulletId, x: bx, y: by, vx: bvx, vy: bvy, life: 2.5, weapon: player.activeWeapon, damage: w.damage, radius: w.bulletRadius });
 
-  // Tell the server so it can relay the bullet to other players
   netSend({ type: 'shoot',
-            bullet: { id: bulletId, x: bx, y: by, vx: bvx, vy: bvy } });
+            bullet: { id: bulletId, x: bx, y: by, vx: bvx, vy: bvy, weapon: player.activeWeapon } });
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -312,10 +318,26 @@ window.addEventListener('keydown', e => {
   keys[e.code] = true;
   if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))
     e.preventDefault();
-  if (e.code === 'Space') fireBullet();
-  if (e.code === 'KeyR')  startReload();
+  if (e.code === 'Space')  fireBullet();
+  if (e.code === 'KeyR')   startReload();
+  if (e.code === 'Digit1') switchWeapon('ar');
+  if (e.code === 'Digit2') switchWeapon('rpg');
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+function switchWeapon(id) {
+  if (id === player.activeWeapon) return;
+  if (!loadStats().ownedGuns.includes(id)) return;
+  player.ammoByWeapon[player.activeWeapon]    = player.ammo;
+  player.reserveByWeapon[player.activeWeapon] = player.reserveAmmo;
+  player.activeWeapon = id;
+  player.weapon       = WEAPONS[id].name;
+  player.maxAmmo      = WEAPONS[id].magSize;
+  player.ammo         = player.ammoByWeapon[id];
+  player.reserveAmmo  = player.reserveByWeapon[id];
+  player.fireCooldown = 0;
+  player.reloadTimer  = 0;
+}
 
 canvas.addEventListener('mousemove', e => {
   const rect = canvas.getBoundingClientRect();
@@ -649,7 +671,8 @@ function handleMessage(msg) {
 
     // ── Another player fired a bullet — simulate it locally ──
     case 'bulletSpawned':
-      remoteBullets.push({ ...msg.bullet, ownerId: msg.playerId, life: 2.0 });
+      const rw = msg.bullet.weapon ?? 'ar';
+      remoteBullets.push({ ...msg.bullet, ownerId: msg.playerId, life: 2.5, weapon: rw, damage: WEAPONS[rw]?.damage ?? WEAPONS.ar.damage, radius: WEAPONS[rw]?.bulletRadius ?? 4 });
       break;
 
     // ── A player took damage (could be us or someone else) ──
@@ -771,8 +794,10 @@ function update(dt) {
     player.reloadTimer -= dt;
     if (player.reloadTimer <= 0) {
       player.reloadTimer = 0;
-      const take = Math.min(player.maxAmmo - player.ammo, player.reserveAmmo);
+      const magSize = WEAPONS[player.activeWeapon].magSize;
+      const take = Math.min(magSize - player.ammo, player.reserveAmmo);
       player.ammo += take; player.reserveAmmo -= take;
+      player.maxAmmo = magSize;
     }
   }
   // Auto-reload when magazine empties
@@ -782,12 +807,13 @@ function update(dt) {
   for (let i = bullets.length - 1; i >= 0; i--) {
     const b = bullets[i];
     b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
+    const br = b.radius ?? 4;
     let remove = b.life <= 0 || isWall(Math.floor(b.x/TILE_SIZE), Math.floor(b.y/TILE_SIZE));
     if (!remove) {
       for (const [, p] of otherPlayers) {
         if (p.dead) continue;
         const ddx = b.x - p.x, ddy = b.y - p.y;
-        if (Math.sqrt(ddx*ddx + ddy*ddy) < PLAYER_SIZE + BULLET_RADIUS) { remove = true; break; }
+        if (Math.sqrt(ddx*ddx + ddy*ddy) < PLAYER_SIZE + br) { remove = true; break; }
       }
     }
     if (remove) bullets.splice(i, 1);
@@ -798,25 +824,25 @@ function update(dt) {
     const b = remoteBullets[i];
     b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
 
+    const rbr = b.radius ?? 4;
     const wallHit   = isWall(Math.floor(b.x/TILE_SIZE), Math.floor(b.y/TILE_SIZE));
     const ddx = b.x - player.x, ddy = b.y - player.y;
     const playerHit = !player.dead &&
-                      Math.sqrt(ddx*ddx + ddy*ddy) < PLAYER_SIZE + BULLET_RADIUS;
+                      Math.sqrt(ddx*ddx + ddy*ddy) < PLAYER_SIZE + rbr;
 
-    // Check if it visually hits any other remote player (purely cosmetic removal)
     let remoteHit = false;
     if (!playerHit) {
       for (const [pid, p] of otherPlayers) {
         if (p.dead || pid === b.ownerId) continue;
         const rx = b.x - p.x, ry = b.y - p.y;
-        if (Math.sqrt(rx*rx + ry*ry) < PLAYER_SIZE + BULLET_RADIUS) { remoteHit = true; break; }
+        if (Math.sqrt(rx*rx + ry*ry) < PLAYER_SIZE + rbr) { remoteHit = true; break; }
       }
     }
 
     if (b.life <= 0 || wallHit || playerHit || remoteHit) {
       if (playerHit && !afkMode) {
-        // Report the hit to the server (server applies damage and broadcasts)
-        netSend({ type: 'hit', damage: BULLET_DAMAGE,
+        const dmg = b.damage ?? WEAPONS.ar.damage;
+        netSend({ type: 'hit', damage: dmg,
                   bulletId: b.id, killerId: b.ownerId });
       }
       remoteBullets.splice(i, 1);
@@ -983,15 +1009,19 @@ function drawOtherPlayers() {
 // ──────────────────────────────────────────────────────────────────
 // DRAW — BULLETS
 // ──────────────────────────────────────────────────────────────────
-function drawBullets(bulletList, color, glowColor) {
+function drawBullets(bulletList, defaultColor, defaultGlow) {
   for (const b of bulletList) {
     const sx = b.x - camera.x, sy = b.y - camera.y;
-    ctx.fillStyle = glowColor;
-    ctx.beginPath(); ctx.arc(sx, sy, BULLET_RADIUS+3, 0, Math.PI*2); ctx.fill();
+    const isRpg = b.weapon === 'rpg';
+    const r     = b.radius ?? 4;
+    const color = isRpg ? '#ff6600' : defaultColor;
+    const glow  = isRpg ? 'rgba(255,100,0,0.40)' : defaultGlow;
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(sx, sy, r + 3, 0, Math.PI*2); ctx.fill();
     ctx.fillStyle = color;
-    ctx.beginPath(); ctx.arc(sx, sy, BULLET_RADIUS,   0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx, sy, r,     0, Math.PI*2); ctx.fill();
     ctx.fillStyle = '#ffffff';
-    ctx.beginPath(); ctx.arc(sx-1, sy-1, BULLET_RADIUS*0.4, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx-1, sy-1, r * 0.35, 0, Math.PI*2); ctx.fill();
   }
 }
 

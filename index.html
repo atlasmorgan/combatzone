@@ -137,38 +137,10 @@
       </div>
 
       <!-- Weapons section -->
-      <div class="px-6 pt-4 pb-2">
+      <div class="px-6 pt-4 pb-4">
         <p class="text-gray-500 font-mono text-xs tracking-[0.2em] uppercase mb-3">Weapons</p>
-        <div class="grid grid-cols-3 gap-3">
-
-          <!-- M4A1 — default, always owned -->
-          <div class="bg-gray-800 border border-gray-700 rounded p-3 flex flex-col items-center gap-2">
-            <span class="text-white font-black text-sm tracking-wider">M4A1</span>
-            <span class="text-gray-400 font-mono text-xs">Assault Rifle</span>
-            <span class="bg-green-900 text-green-400 font-mono text-xs px-2 py-0.5 rounded tracking-widest mt-auto">
-              ✓ OWNED
-            </span>
-          </div>
-
-          <!-- Placeholder slots -->
-          <div class="bg-gray-800/50 border border-gray-800 rounded p-3 flex flex-col items-center gap-2 opacity-50">
-            <span class="text-gray-600 font-black text-sm tracking-wider">??????</span>
-            <span class="text-gray-700 font-mono text-xs">Coming Soon</span>
-            <span class="text-gray-700 font-mono text-xs mt-auto">— BB</span>
-          </div>
-
-          <div class="bg-gray-800/50 border border-gray-800 rounded p-3 flex flex-col items-center gap-2 opacity-50">
-            <span class="text-gray-600 font-black text-sm tracking-wider">??????</span>
-            <span class="text-gray-700 font-mono text-xs">Coming Soon</span>
-            <span class="text-gray-700 font-mono text-xs mt-auto">— BB</span>
-          </div>
-
-        </div>
+        <div id="shopWeaponGrid" class="grid grid-cols-3 gap-3"></div>
       </div>
-
-      <p class="text-gray-700 font-mono text-xs text-center pb-4 pt-2">
-        More weapons coming soon — earn BB by getting kills in battle
-      </p>
     </div>
   </div>
 
@@ -271,11 +243,54 @@ auth.onAuthStateChanged(user => {
 });
 
 // ── Battle Shop ───────────────────────────────────────────────────
+const SHOP_WEAPONS = [
+  { id: 'ar',  name: 'M4A1',  sub: 'Assault Rifle', cost: 0  },
+  { id: 'rpg', name: 'RPG',   sub: '50 dmg • 3 shots', cost: 30 },
+];
+
+function renderShopWeapons() {
+  const s    = loadStats();
+  const grid = document.getElementById('shopWeaponGrid');
+  grid.innerHTML = SHOP_WEAPONS.map(w => {
+    const owned = s.ownedGuns.includes(w.id);
+    const canBuy = !owned && s.battleBucks >= w.cost;
+    const action = owned
+      ? `<span class="bg-green-900 text-green-400 font-mono text-xs px-2 py-0.5 rounded tracking-widest mt-auto">✓ OWNED</span>`
+      : canBuy
+        ? `<button onclick="buyGun('${w.id}',${w.cost})"
+             class="bg-yellow-400 hover:bg-yellow-300 text-gray-950 font-black text-xs px-2 py-1 rounded tracking-widest mt-auto transition-colors">
+             BUY — ${w.cost} BB
+           </button>`
+        : `<span class="text-gray-600 font-mono text-xs mt-auto">${w.cost} BB</span>`;
+    return `
+      <div class="bg-gray-800 border ${owned ? 'border-gray-700' : 'border-gray-800'} rounded p-3 flex flex-col items-center gap-2 ${owned ? '' : 'opacity-70'}">
+        <span class="text-white font-black text-sm tracking-wider">${w.name}</span>
+        <span class="text-gray-400 font-mono text-xs text-center">${w.sub}</span>
+        ${action}
+      </div>`;
+  }).join('');
+}
+
+function buyGun(id, cost) {
+  const s = loadStats();
+  if (s.ownedGuns.includes(id) || s.battleBucks < cost) return;
+  const newBucks = s.battleBucks - cost;
+  saveStats({ battleBucks: newBucks, ownedGuns: [...s.ownedGuns, id] });
+  syncToFirebase(auth.currentUser);
+  renderStats();
+  renderShopWeapons();
+  const el = document.getElementById('shopBucks');
+  const img = el.querySelector('img');
+  el.textContent = newBucks;
+  if (img) el.prepend(img);
+}
+
 function openShop() {
   const el = document.getElementById('shopBucks');
   const img = el.querySelector('img');
   el.textContent = loadStats().battleBucks;
   if (img) el.prepend(img);
+  renderShopWeapons();
   document.getElementById('shopOverlay').style.display = 'flex';
 }
 function closeShop() {
