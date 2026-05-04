@@ -176,6 +176,7 @@ function useSplatter() {
   if (player.activeWeapon !== 'paintball') return;
   if (splatterCooldown > 0 || player.dead || afkMode || player.frozen) return;
   splatterCooldown = SPLATTER_COOLDOWN;
+  playSplatter();
   netSend({ type: 'splatter' });
 }
 
@@ -372,6 +373,15 @@ freezeAudio.volume = 0.7;
 
 function playFreeze() {
   const s = freezeAudio.cloneNode();
+  s.volume = 0.7;
+  s.play().catch(() => {});
+}
+
+const splatterAudio = new Audio('assets/splatter.mp3');
+splatterAudio.volume = 0.7;
+
+function playSplatter() {
+  const s = splatterAudio.cloneNode();
   s.volume = 0.7;
   s.play().catch(() => {});
 }
