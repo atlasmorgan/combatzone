@@ -252,6 +252,15 @@ function playArShoot() {
   s.play().catch(() => {});
 }
 
+const reloadAudio = new Audio('assets/reload.mp3');
+reloadAudio.volume = 0.5;
+
+function playReload() {
+  const s = reloadAudio.cloneNode();
+  s.volume = 0.5;
+  s.play().catch(() => {});
+}
+
 // ──────────────────────────────────────────────────────────────────
 // BULLETS  (local = fired by this client)
 // ──────────────────────────────────────────────────────────────────
@@ -263,6 +272,7 @@ function startReload() {
   if (player.ammo === player.maxAmmo) return; // mag already full
   if (player.reserveAmmo <= 0)        return; // nothing left to load
   player.reloadTimer = RELOAD_TIME;
+  playReload();
 }
 
 function fireBullet() {
