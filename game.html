@@ -267,6 +267,15 @@ function playArShoot() {
   s.play().catch(() => {});
 }
 
+const shotgunAudio = new Audio('assets/shotgun-shoot.mp3');
+shotgunAudio.volume = 0.6;
+
+function playShotgun() {
+  const s = shotgunAudio.cloneNode();
+  s.volume = 0.6;
+  s.play().catch(() => {});
+}
+
 const reloadAudio = new Audio('assets/reload.mp3');
 reloadAudio.volume = 0.5;
 
@@ -334,6 +343,7 @@ function fireBullet() {
   player.fireCooldown = w.fireRate;
   player.muzzleTimer  = w.muzzleDuration;
   if (player.activeWeapon === 'paintball') playPaintball();
+  else if (player.activeWeapon === 'shotgun') playShotgun();
   else if (player.activeWeapon !== 'rpg') playArShoot();
 
   if (w.pelletCount && w.pelletCount > 1) {
