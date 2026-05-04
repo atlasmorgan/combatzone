@@ -974,7 +974,7 @@ function drawPlayer() {
 
   // Muzzle flash — fades out over MUZZLE_DURATION seconds
   if (player.muzzleTimer > 0) {
-    const alpha = player.muzzleTimer / MUZZLE_DURATION;
+    const alpha = Math.min(1, player.muzzleTimer / WEAPONS[player.activeWeapon].muzzleDuration);
     const fx = sx + Math.cos(player.turretAngle) * PLAYER_SIZE * 1.4;
     const fy = sy + Math.sin(player.turretAngle) * PLAYER_SIZE * 1.4;
     ctx.save();
@@ -1031,7 +1031,7 @@ function drawBullets(bulletList, defaultColor, defaultGlow) {
 // Wall-collision probes (8 points on the PLAYER_SIZE square perimeter)
 function drawEntityHitbox(sx, sy, isLocal) {
   const hs = PLAYER_SIZE;
-  const hitR = PLAYER_SIZE + BULLET_RADIUS; // bullet-player collision radius
+  const hitR = PLAYER_SIZE + 4; // bullet-player collision radius (AR default)
 
   ctx.save();
 
@@ -1085,7 +1085,7 @@ function drawHitboxes() {
   ctx.lineWidth = 1;
   for (const b of [...bullets, ...remoteBullets]) {
     ctx.beginPath();
-    ctx.arc(b.x - camera.x, b.y - camera.y, BULLET_RADIUS, 0, Math.PI * 2);
+    ctx.arc(b.x - camera.x, b.y - camera.y, b.radius ?? 4, 0, Math.PI * 2);
     ctx.stroke();
   }
   ctx.restore();
