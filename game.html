@@ -511,6 +511,7 @@ function switchWeapon(id) {
   player.reloadTimer    = 0;
   player.burstRemaining = 0;
   player.burstTimer     = 0;
+  specialPrimed = false;
 }
 
 canvas.addEventListener('mousemove', e => {
@@ -535,6 +536,7 @@ const joystick = {
   radius: 80, knobRadius: 32,
 };
 const aimTouch = { active: false, touchId: null, x: 0, y: 0 };
+let specialPrimed = false; // true = special button tapped, waiting for placement tap
 
 function touchPos(t) {
   const r = canvas.getBoundingClientRect();
@@ -553,8 +555,10 @@ canvas.addEventListener('touchstart', e => {
     let hitBtn = false;
     for (const btn of weaponBtnRects) {
       if (x >= btn.x && x <= btn.x + btn.size && y >= btn.y && y <= btn.y + btn.size) {
-        if (btn.id === '__special__') { useSplatter(); useFreeze(); }
-        else switchWeapon(btn.id);
+        if (btn.id === '__special__') {
+          const spec = WEAPON_SPECIALS[player.activeWeapon];
+          if (spec && spec.ready()) specialPrimed = !specialPrimed;
+        } else { switchWeapon(btn.id); }
         hitBtn = true;
         break;
       }
@@ -571,7 +575,12 @@ canvas.addEventListener('touchstart', e => {
     } else if (!aimTouch.active) {
       Object.assign(aimTouch, { active: true, touchId: t.identifier, x, y });
       player.turretAngle = Math.atan2((y + camera.y) - player.y, (x + camera.x) - player.x);
-      fireBullet();
+      if (specialPrimed) {
+        useSplatter(); useFreeze();
+        specialPrimed = false;
+      } else {
+        fireBullet();
+      }
     }
   }
 }, { passive: false });
@@ -1769,19 +1778,19 @@ function drawWeaponSwitcher() {
     weaponBtnRects.push({ id: '__special__', x: bx, y: btnY, size });
 
     ctx.save();
-    ctx.fillStyle   = ready ? spec.color    : spec.dimColor;
-    ctx.strokeStyle = ready ? spec.stroke   : spec.dimStroke;
-    ctx.lineWidth   = ready ? 2.5 : 1.5;
+    ctx.fillStyle   = specialPrimed ? 'rgba(255,220,0,0.92)' : ready ? spec.color    : spec.dimColor;
+    ctx.strokeStyle = specialPrimed ? '#fff700'              : ready ? spec.stroke   : spec.dimStroke;
+    ctx.lineWidth   = specialPrimed ? 3 : ready ? 2.5 : 1.5;
     ctx.beginPath(); ctx.roundRect(bx, btnY, size, size, 7); ctx.fill(); ctx.stroke();
 
-    ctx.fillStyle    = ready ? '#fff' : '#aabbcc';
+    ctx.fillStyle    = specialPrimed ? '#111' : ready ? '#fff' : '#aabbcc';
     ctx.font         = 'bold 8px monospace';
     ctx.textAlign    = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(spec.label, bx + size / 2, btnY + size * 0.38);
-    ctx.fillStyle = ready ? '#eef8ff' : '#667788';
+    ctx.fillStyle = specialPrimed ? '#333' : ready ? '#eef8ff' : '#667788';
     ctx.font = '8px monospace';
-    ctx.fillText(ready ? 'READY' : `${Math.ceil(spec.cd())}s`, bx + size / 2, btnY + size * 0.68);
+    ctx.fillText(specialPrimed ? 'TAP!' : ready ? 'READY' : `${Math.ceil(spec.cd())}s`, bx + size / 2, btnY + size * 0.68);
     ctx.restore();
   }
 }
