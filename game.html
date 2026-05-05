@@ -401,6 +401,7 @@ function playSplatter() {
 const flameAudio = new Audio('assets/flame.mp3');
 flameAudio.loop   = true;
 flameAudio.volume = 0.6;
+let flameFireTimer = 0; // dead-man's switch: resets each particle; sound stops when it expires
 
 // ──────────────────────────────────────────────────────────────────
 // BULLETS  (local = fired by this client)
@@ -459,6 +460,7 @@ function fireBullet() {
     }
   } else if (w.flameSpread) {
     spawnOneBullet(w, (Math.random() - 0.5) * 2 * w.flameSpread);
+    flameFireTimer = 0.25;
     if (flameAudio.paused) flameAudio.play().catch(() => {});
   } else {
     spawnOneBullet(w);
@@ -1041,10 +1043,9 @@ function update(dt) {
   if (aimTouch.active && !afkMode) fireBullet();
   // Auto-fire flamethrower while space or mouse held
   if (player.activeWeapon === 'flame' && !afkMode && (keys['Space'] || mouseHeld)) fireBullet();
-  // Stop flame sound the moment fire input is released
-  const flameOn = player.activeWeapon === 'flame' && !player.dead && !afkMode
-                  && (keys['Space'] || mouseHeld || aimTouch.active);
-  if (!flameOn && !flameAudio.paused) { flameAudio.pause(); flameAudio.currentTime = 0; }
+  // Tick flame dead-man's switch; stop sound when no particle has fired recently
+  if (flameFireTimer > 0) flameFireTimer -= dt;
+  if (flameFireTimer <= 0 && !flameAudio.paused) { flameAudio.pause(); flameAudio.currentTime = 0; }
 
   // ── Timers ──
   player.fireCooldown = Math.max(0, player.fireCooldown - dt);
