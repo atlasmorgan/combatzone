@@ -732,11 +732,14 @@ function appendChatMessage(name, text) {
 // ──────────────────────────────────────────────────────────────────
 // COMMANDS
 // ──────────────────────────────────────────────────────────────────
-let showHitboxes = false;
-let afkMode      = false;
+let showHitboxes     = false;
+let afkMode          = false;
+let adminUnlocked    = false;
+let awaitingAdminCode = false;
 
 function handleCommand(raw) {
-  const [cmd] = raw.slice(1).trim().toLowerCase().split(/\s+/);
+  const parts = raw.slice(1).trim().toLowerCase().split(/\s+/);
+  const [cmd] = parts;
   switch (cmd) {
     case 'hitbox':
     case 'hitboxes':
@@ -753,6 +756,23 @@ function handleCommand(raw) {
       netSend({ type: 'afk', active: afkMode });
       appendChatMessage('System', `AFK mode ${afkMode ? 'ON — movement, shooting & damage disabled' : 'OFF'}`);
       break;
+    case 'admin':
+      awaitingAdminCode = true;
+      appendChatMessage('System', 'Enter the 6-digit admin code:');
+      break;
+    case 'give': {
+      if (!adminUnlocked) { appendChatMessage('System', 'Unknown command: /give'); break; }
+      const amount = parseInt(parts[1], 10);
+      if (!amount || amount < 1 || amount > 1600) {
+        appendChatMessage('System', 'Usage: /give [1-1600] bb');
+        break;
+      }
+      const newBucks = loadStats().battleBucks + amount;
+      saveStats({ battleBucks: newBucks });
+      syncToFirebase(auth.currentUser);
+      appendChatMessage('System', `+${amount} BB granted. Total: ${newBucks} BB`);
+      break;
+    }
     default:
       appendChatMessage('System', `Unknown command: /${cmd}`);
   }
@@ -761,6 +781,17 @@ function handleCommand(raw) {
 function sendChat() {
   const text = chatInput.value.trim();
   if (!text) return;
+  if (awaitingAdminCode) {
+    awaitingAdminCode = false;
+    if (text.trim() === '030416') {
+      adminUnlocked = true;
+      appendChatMessage('System', '✓ Admin access granted.');
+    } else {
+      appendChatMessage('System', '✗ Invalid code.');
+    }
+    chatInput.value = '';
+    return;
+  }
   chatInput.value = '';
   if (text.startsWith('/')) { handleCommand(text); return; }
   netSend({ type: 'chat', text });
