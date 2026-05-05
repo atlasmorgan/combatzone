@@ -554,7 +554,7 @@ canvas.addEventListener('touchstart', e => {
     // Check weapon / splatter buttons before joystick / aim
     let hitBtn = false;
     for (const btn of weaponBtnRects) {
-      if (x >= btn.x && x <= btn.x + btn.size && y >= btn.y && y <= btn.y + btn.size) {
+      if (x >= btn.x && x <= btn.x + (btn.w ?? btn.size) && y >= btn.y && y <= btn.y + (btn.h ?? btn.size)) {
         if (btn.id === '__special__') {
           const spec = WEAPON_SPECIALS[player.activeWeapon];
           if (spec && spec.ready()) specialPrimed = !specialPrimed;
@@ -1770,27 +1770,28 @@ function drawWeaponSwitcher() {
     ctx.restore();
   }
 
-  // Special attack button — shown for any weapon that has one
+  // Special attack button — big, centered below all weapon buttons
   const spec = WEAPON_SPECIALS[player.activeWeapon];
   if (spec) {
-    const bx    = startX + available.length * (size + gap);
+    const specH = 44;
+    const specY = btnY + size + gap;
     const ready = spec.ready();
-    weaponBtnRects.push({ id: '__special__', x: bx, y: btnY, size });
+    weaponBtnRects.push({ id: '__special__', x: startX, y: specY, w: totalW, h: specH });
 
     ctx.save();
     ctx.fillStyle   = specialPrimed ? 'rgba(255,220,0,0.92)' : ready ? spec.color    : spec.dimColor;
     ctx.strokeStyle = specialPrimed ? '#fff700'              : ready ? spec.stroke   : spec.dimStroke;
     ctx.lineWidth   = specialPrimed ? 3 : ready ? 2.5 : 1.5;
-    ctx.beginPath(); ctx.roundRect(bx, btnY, size, size, 7); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.roundRect(startX, specY, totalW, specH, 8); ctx.fill(); ctx.stroke();
 
     ctx.fillStyle    = specialPrimed ? '#111' : ready ? '#fff' : '#aabbcc';
-    ctx.font         = 'bold 8px monospace';
+    ctx.font         = 'bold 13px monospace';
     ctx.textAlign    = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(spec.label, bx + size / 2, btnY + size * 0.38);
+    ctx.fillText(spec.label, startX + totalW / 2, specY + specH * 0.38);
     ctx.fillStyle = specialPrimed ? '#333' : ready ? '#eef8ff' : '#667788';
-    ctx.font = '8px monospace';
-    ctx.fillText(specialPrimed ? 'TAP!' : ready ? 'READY' : `${Math.ceil(spec.cd())}s`, bx + size / 2, btnY + size * 0.68);
+    ctx.font = '10px monospace';
+    ctx.fillText(specialPrimed ? 'TAP TO USE' : ready ? 'READY' : `${Math.ceil(spec.cd())}s`, startX + totalW / 2, specY + specH * 0.72);
     ctx.restore();
   }
 }
