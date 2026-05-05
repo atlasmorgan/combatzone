@@ -669,6 +669,8 @@ const otherPlayers = new Map();
 
 // Bullets that other players have fired (we simulate them locally)
 let remoteBullets = [];
+// Tracks last flame-sound time per remote player to avoid spam
+const remoteFlameTimers = {};
 
 // ──────────────────────────────────────────────────────────────────
 // CHAT
@@ -861,10 +863,22 @@ function handleMessage(msg) {
       break;
 
     // ── Another player fired a bullet — simulate it locally ──
-    case 'bulletSpawned':
+    case 'bulletSpawned': {
       const rw = msg.bullet.weapon ?? 'ar';
-      remoteBullets.push({ ...msg.bullet, ownerId: msg.playerId, life: 2.5, weapon: rw, damage: WEAPONS[rw]?.damage ?? WEAPONS.ar.damage, radius: WEAPONS[rw]?.bulletRadius ?? 4 });
+      remoteBullets.push({ ...msg.bullet, ownerId: msg.playerId, life: WEAPONS[rw]?.bulletLife ?? 2.5, weapon: rw, damage: WEAPONS[rw]?.damage ?? WEAPONS.ar.damage, radius: WEAPONS[rw]?.bulletRadius ?? 4 });
+      if (rw === 'paintball' || rw === 'paintbomb') playPaintball();
+      else if (rw === 'shotgun') playShotgun();
+      else if (rw === 'flame') {
+        const now = performance.now();
+        if (!remoteFlameTimers[msg.playerId] || now - remoteFlameTimers[msg.playerId] > 500) {
+          remoteFlameTimers[msg.playerId] = now;
+          const s = flameAudio.cloneNode(); s.loop = false; s.volume = 0.45;
+          s.play().catch(() => {});
+        }
+      }
+      else if (rw !== 'rpg' && rw !== 'freeze' && rw !== 'paintbomb') playArShoot();
       break;
+    }
 
     // ── A player took damage (could be us or someone else) ──
     case 'damaged':
