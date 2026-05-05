@@ -561,20 +561,17 @@ canvas.addEventListener('touchstart', e => {
     }
     if (hitBtn) continue;
 
-    if (x < canvas.width / 2) {
-      const jcx = 100, jcy = canvas.height - 160;
-      const dj = Math.sqrt((x - jcx) ** 2 + (y - jcy) ** 2);
-      if (!joystick.active && dj <= joystick.radius) {
-        Object.assign(joystick, {
-          active: true, touchId: t.identifier,
-          baseX: x, baseY: y, knobX: x, knobY: y, dx: 0, dy: 0,
-        });
-      }
-    } else {
-      if (!aimTouch.active) {
-        Object.assign(aimTouch, { active: true, touchId: t.identifier, x, y });
-        fireBullet();
-      }
+    const jcx = 100, jcy = canvas.height - 160;
+    const dj = Math.sqrt((x - jcx) ** 2 + (y - jcy) ** 2);
+    if (!joystick.active && x < canvas.width / 2 && dj <= joystick.radius) {
+      Object.assign(joystick, {
+        active: true, touchId: t.identifier,
+        baseX: x, baseY: y, knobX: x, knobY: y, dx: 0, dy: 0,
+      });
+    } else if (!aimTouch.active) {
+      Object.assign(aimTouch, { active: true, touchId: t.identifier, x, y });
+      player.turretAngle = Math.atan2((y + camera.y) - player.y, (x + camera.x) - player.x);
+      fireBullet();
     }
   }
 }, { passive: false });
