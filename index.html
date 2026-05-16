@@ -104,6 +104,18 @@
     ▶ HOST A NEW ROOM
   </button>
 
+  <!-- ── BR BUTTON ───────────────────────────────────────────────── -->
+  <button
+    id="hostBrBtn"
+    class="bg-red-700 hover:bg-red-600 active:bg-red-800
+           border border-red-500
+           text-white font-black text-sm tracking-widest
+           w-full max-w-xs sm:w-auto px-8 py-3 rounded mb-4 transition-colors select-none"
+    onclick="hostBrRoom()"
+  >
+    ☠ BATTLE ROYALE
+  </button>
+
   <!-- ── BATTLE SHOP BUTTON ───────────────────────────────────────── -->
   <button
     onclick="openShop()"
@@ -328,7 +340,7 @@ function getNameParam() {
   return n ? `&name=${encodeURIComponent(n)}` : '';
 }
 
-// ── Host a new room ───────────────────────────────────────────────
+// ── Host a new casual room ───────────────────────────────────────
 async function hostRoom() {
   const btn = document.getElementById('hostBtn');
   btn.textContent = 'Creating…';
@@ -340,6 +352,23 @@ async function hostRoom() {
     location.href = `game?room=${data.id}${getNameParam()}`;
   } catch (err) {
     btn.textContent = '▶ HOST A NEW ROOM';
+    btn.disabled = false;
+    alert('Could not reach server. Is it running?');
+  }
+}
+
+// ── Host a Battle Royale room ────────────────────────────────────
+async function hostBrRoom() {
+  const btn = document.getElementById('hostBrBtn');
+  btn.textContent = 'Creating…';
+  btn.disabled = true;
+
+  try {
+    const res  = await fetch('api/rooms/br', { method: 'POST' });
+    const data = await res.json();
+    location.href = `game?room=${data.id}${getNameParam()}`;
+  } catch (err) {
+    btn.textContent = '☠ BATTLE ROYALE';
     btn.disabled = false;
     alert('Could not reach server. Is it running?');
   }
@@ -365,11 +394,20 @@ function renderRooms(rooms) {
   }
 
   container.innerHTML = rooms.map(room => {
-    const isFull  = room.players >= room.maxPlayers;
-    const pips    = buildPips(room.players, room.maxPlayers);
+    const isBr      = room.mode === 'br';
+    const inProgress = isBr && room.phase !== 'lobby';
+    const isFull    = room.players >= room.maxPlayers;
+    const pips      = buildPips(room.players, room.maxPlayers);
+    const brBadge   = isBr
+      ? `<span class="bg-red-900 text-red-400 font-mono text-xs px-2 py-0.5 rounded tracking-widest ml-2">BR</span>`
+      : '';
+    const phaseLabel = isBr && inProgress
+      ? `<span class="text-gray-500 font-mono text-xs ml-1">${room.phase.toUpperCase()}</span>`
+      : '';
 
-    // JOIN button or FULL badge
-    const action = isFull
+    const action = inProgress
+      ? `<span class="bg-gray-800 text-gray-500 font-mono text-xs px-3 py-1 rounded tracking-widest">IN PROGRESS</span>`
+      : isFull
       ? `<span class="bg-red-900 text-red-400 font-mono text-xs px-3 py-1 rounded tracking-widest">FULL</span>`
       : `<button
            onclick="joinRoom('${room.id}')"
@@ -377,19 +415,21 @@ function renderRooms(rooms) {
                   text-white font-mono text-xs px-4 py-1 rounded tracking-widest transition-colors"
          >JOIN</button>`;
 
+    const borderClass = isBr ? 'border-red-900' : 'border-gray-800';
+
     return `
       <div class="flex items-center justify-between
-                  bg-gray-900 border border-gray-800 rounded px-4 py-3">
-        <!-- Room code -->
-        <span class="text-yellow-400 font-mono text-sm tracking-[0.2em] w-20">${room.id}</span>
+                  bg-gray-900 border ${borderClass} rounded px-4 py-3">
+        <div class="flex items-center w-28">
+          <span class="text-yellow-400 font-mono text-sm tracking-[0.2em]">${room.id}</span>
+          ${brBadge}${phaseLabel}
+        </div>
 
-        <!-- Player pips -->
         <div class="flex items-center gap-1">
           ${pips}
           <span class="text-gray-500 font-mono text-xs ml-2">${room.players}/${room.maxPlayers}</span>
         </div>
 
-        <!-- Action -->
         ${action}
       </div>
     `;

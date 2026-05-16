@@ -55,20 +55,26 @@ function randomSpawnPos(map) {
 }
 
 // Max players per room
-const MAX_PLAYERS = 8;
+const MAX_PLAYERS    = 8;
+const MAX_PLAYERS_BR = 16;
+const BR_CHEST_COUNT = 20;
+
+// Zone shrink stages: hold at each radius for holdDuration seconds, then tween to next
+const BR_ZONE_STAGES = [
+  { radius: 1600, holdDuration: 80 },
+  { radius: 900,  holdDuration: 70 },
+  { radius: 400,  holdDuration: 60 },
+  { radius: 0 },  // sentinel
+];
 
 // ── Room storage ──────────────────────────────────────────────────
-// Key = room ID string (e.g. "AB3K"), value = room object:
-//   { id, players: Map<numericId, playerState>, nextId, mapSeed }
 const rooms = new Map();
 
 // ── Room ID generation ────────────────────────────────────────────
-// Characters chosen to avoid visually ambiguous chars (I, O, 1, 0)
 const ID_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 function generateRoomId() {
   let id;
-  // Keep generating until we find one not already in use
   do {
     id = Array.from({ length: 4 }, () =>
       ID_CHARS[Math.floor(Math.random() * ID_CHARS.length)]
@@ -77,27 +83,107 @@ function generateRoomId() {
   return id;
 }
 
+// ── BR helpers ────────────────────────────────────────────────────
+
+function generateChests(map, count) {
+  const floor = [];
+  for (let row = 1; row < MAP_ROWS - 1; row++)
+    for (let col = 1; col < MAP_COLS - 1; col++)
+      if (map[row][col] === 0) floor.push([col, row]);
+  // Fisher-Yates shuffle
+  for (let i = floor.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [floor[i], floor[j]] = [floor[j], floor[i]];
+  }
+  return floor.slice(0, count).map(([ col, row ], id) => ({
+    id,
+    x: col * TILE_SIZE + TILE_SIZE / 2,
+    y: row * TILE_SIZE + TILE_SIZE / 2,
+    open: false,
+  }));
+}
+
+function startBrMatch(room) {
+  if (room.brPhase !== 'lobby') return;
+  if (room.players.size < 2) return;
+  if (room.brLobbyTimer) { clearTimeout(room.brLobbyTimer); room.brLobbyTimer = null; }
+
+  room.brPhase  = 'dropping';
+  room.brChests = generateChests(room.map, BR_CHEST_COUNT);
+  room.brAlivePlayers = new Set(room.players.keys());
+
+  broadcastRoomAll(room, { type: 'brPhaseChanged', phase: 'dropping', chests: room.brChests });
+
+  setTimeout(() => activateBrMatch(room), 5000);
+}
+
+function activateBrMatch(room) {
+  if (room.brPhase !== 'dropping') return;
+  room.brPhase = 'active';
+  broadcastRoomAll(room, { type: 'brPhaseChanged', phase: 'active' });
+  scheduleNextShrink(room, 0);
+}
+
+function scheduleNextShrink(room, stageIndex) {
+  const stage = BR_ZONE_STAGES[stageIndex];
+  if (!stage || stage.holdDuration === undefined) return;
+
+  room.brZoneTimer = setTimeout(() => {
+    if (room.brPhase !== 'active') return;
+    const nextStage = BR_ZONE_STAGES[stageIndex + 1];
+    if (!nextStage) return;
+    room.brZoneStage  = stageIndex + 1;
+    room.brZoneRadius = nextStage.radius;
+    broadcastRoomAll(room, {
+      type:         'brZoneShrink',
+      newRadius:    nextStage.radius,
+      tweenDuration: 30,
+    });
+    scheduleNextShrink(room, stageIndex + 1);
+  }, stage.holdDuration * 1000);
+}
+
+function checkBrWin(room) {
+  if (room.brPhase !== 'active' && room.brPhase !== 'dropping') return;
+  if (room.brAlivePlayers.size !== 1) return;
+
+  const winnerId = [...room.brAlivePlayers][0];
+  const winner   = room.players.get(winnerId);
+  room.brPhase   = 'ended';
+  if (room.brZoneTimer) clearTimeout(room.brZoneTimer);
+
+  broadcastRoomAll(room, {
+    type:       'brWinner',
+    winnerId,
+    winnerName: winner ? winner.name : 'Unknown',
+  });
+
+  setTimeout(() => {
+    rooms.delete(room.id);
+    console.log(`[room] BR room ${room.id} ended and deleted`);
+  }, 10000);
+}
+
 // ── HTTP server ───────────────────────────────────────────────────
 const httpServer = http.createServer((req, res) => {
-  // Parse URL (ignore query string for routing)
   const url  = new URL(req.url, `http://localhost`);
   const path_ = url.pathname;
-
-  // ── REST API ────────────────────────────────────────────────────
 
   // GET /api/rooms → list of active rooms
   if (req.method === 'GET' && path_ === '/api/rooms') {
     const list = Array.from(rooms.values()).map(r => ({
       id:         r.id,
       players:    r.players.size,
-      maxPlayers: MAX_PLAYERS,
+      maxPlayers: r.mode === 'br' ? MAX_PLAYERS_BR : MAX_PLAYERS,
+      mode:       r.mode ?? 'casual',
+      phase:      r.brPhase ?? null,
     }));
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(list));
     return;
   }
 
-  // POST /api/rooms → create a new room, return { id }
+  // POST /api/rooms → create a new casual room, return { id }
   if (req.method === 'POST' && path_ === '/api/rooms') {
     const id      = generateRoomId();
     const mapSeed = Math.floor(Math.random() * 1_000_000);
@@ -107,14 +193,44 @@ const httpServer = http.createServer((req, res) => {
       nextId:  1,
       mapSeed,
       map: generateMap(mapSeed),
+      mode: 'casual',
     });
-    console.log(`[room] Created room ${id}`);
+    console.log(`[room] Created casual room ${id}`);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ id }));
     return;
   }
 
-  // ── Static file routes ──────────────────────────────────────────
+  // POST /api/rooms/br → create a BR room, return { id }
+  if (req.method === 'POST' && path_ === '/api/rooms/br') {
+    const id      = generateRoomId();
+    const mapSeed = Math.floor(Math.random() * 1_000_000);
+    const map     = generateMap(mapSeed);
+
+    const room = {
+      id,
+      players: new Map(),
+      nextId:  1,
+      mapSeed,
+      map,
+      mode:           'br',
+      brPhase:        'lobby',
+      brReady:        new Set(),
+      brChests:       [],
+      brZoneStage:    0,
+      brZoneRadius:   1600,
+      brAlivePlayers: new Set(),
+      brLobbyTimer:   null,
+      brZoneTimer:    null,
+    };
+    // brLobbyTimer refs the room so we assign after creation
+    room.brLobbyTimer = setTimeout(() => startBrMatch(room), 60000);
+    rooms.set(id, room);
+    console.log(`[room] Created BR room ${id}`);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ id }));
+    return;
+  }
 
   // GET /game → serve game.html
   if (req.method === 'GET' && path_ === '/game') {
@@ -152,20 +268,17 @@ const httpServer = http.createServer((req, res) => {
     return;
   }
 
-  // Anything else → 404
   res.writeHead(404);
   res.end('Not found');
 });
 
-// ── WebSocket server — piggybacking on the same port via HTTP upgrade
+// ── WebSocket server ──────────────────────────────────────────────
 const wss = new WebSocketServer({ server: httpServer });
 
 wss.on('connection', (ws, req) => {
-  // Parse the room ID from the query string: ws://host/?room=XXXX
   const url    = new URL(req.url, 'http://localhost');
   const roomId = url.searchParams.get('room');
 
-  // Validate room exists
   if (!roomId || !rooms.has(roomId)) {
     ws.close(1008, 'Room not found');
     return;
@@ -173,18 +286,22 @@ wss.on('connection', (ws, req) => {
 
   const room = rooms.get(roomId);
 
-  // Validate room not full
-  if (room.players.size >= MAX_PLAYERS) {
+  // BR rooms block late joiners once the match has started
+  if (room.mode === 'br' && room.brPhase !== 'lobby') {
+    ws.close(1008, 'Match already in progress');
+    return;
+  }
+
+  const maxPlayers = room.mode === 'br' ? MAX_PLAYERS_BR : MAX_PLAYERS;
+  if (room.players.size >= maxPlayers) {
     ws.close(1008, 'Room is full');
     return;
   }
 
-  // Assign this player an ID scoped to the room
-  const id       = room.nextId++;
-  const rawName  = url.searchParams.get('name') ?? '';
-  const name     = rawName.trim().replace(/[<>&"]/g, '').slice(0, 20) || `Player ${id}`;
+  const id      = room.nextId++;
+  const rawName = url.searchParams.get('name') ?? '';
+  const name    = rawName.trim().replace(/[<>&"]/g, '').slice(0, 20) || `Player ${id}`;
 
-  // Build this player's server-side state (ws field is stripped before broadcast)
   const spawn = randomSpawnPos(room.map);
   const p = {
     id, ws, name,
@@ -194,28 +311,37 @@ wss.on('connection', (ws, req) => {
   };
   room.players.set(id, p);
 
-  // Send the newcomer their ID, the map seed, and the existing player list
-  send(ws, {
+  // Build init payload; include BR state for BR rooms
+  const initPayload = {
     type:    'init',
     id,
     name,
     mapSeed: room.mapSeed,
     players: otherPlayersPublic(room, id),
-  });
+  };
+  if (room.mode === 'br') {
+    initPayload.brMode   = true;
+    initPayload.brPhase  = room.brPhase;
+    initPayload.brChests = room.brChests;
+  }
+  send(ws, initPayload);
 
-  // Tell everyone else in the same room that a new player joined
   broadcastRoom(room, { type: 'joined', player: pub(p) }, id);
 
-  console.log(`[+] ${name} joined room ${roomId}  (${room.players.size} in room)`);
+  // Send current ready list to the newcomer
+  if (room.mode === 'br') {
+    send(ws, { type: 'brReadyState', readyIds: [...room.brReady] });
+  }
+
+  console.log(`[+] ${name} joined ${room.mode} room ${roomId}  (${room.players.size}/${maxPlayers})`);
 
   // ── Handle messages from this client ────────────────────────────
   ws.on('message', (raw) => {
     let msg;
-    try { msg = JSON.parse(raw); } catch { return; } // ignore malformed JSON
+    try { msg = JSON.parse(raw); } catch { return; }
 
     switch (msg.type) {
 
-      // Position / angle update — relay to everyone else in the room
       case 'update':
         p.x           = msg.x           ?? p.x;
         p.y           = msg.y           ?? p.y;
@@ -225,22 +351,19 @@ wss.on('connection', (ws, req) => {
           room,
           { type: 'snapshot', id, x: p.x, y: p.y,
             bodyAngle: p.bodyAngle, turretAngle: p.turretAngle },
-          id  // don't echo back to sender
+          id
         );
         break;
 
-      // Player fired a bullet — relay to everyone else in the room
       case 'shoot':
         broadcastRoom(room, { type: 'bulletSpawned', playerId: id, bullet: msg.bullet }, id);
         break;
 
-      // AFK toggle — relay state to everyone else in the room
       case 'afk':
         p.afk = !!msg.active;
         broadcastRoom(room, { type: 'afkChanged', id, afk: p.afk }, id);
         break;
 
-      // Chat message — broadcast to everyone in the room including sender
       case 'chat': {
         const text = String(msg.text ?? '').trim().slice(0, 200);
         if (!text) break;
@@ -248,59 +371,111 @@ wss.on('connection', (ws, req) => {
         break;
       }
 
-      // Client-side hit detection: this player reports they were hit.
-      // The client sends the shooter's ID so we can credit the kill.
       case 'hit': {
-        if (p.health <= 0) break; // already dead — ignore duplicate hits
+        if (p.health <= 0) break;
 
         p.health = Math.max(0, p.health - Math.round(msg.damage || 0));
-
-        // Broadcast the new health to all players in the room
         broadcastRoomAll(room, { type: 'damaged', id, health: p.health });
 
         if (p.health <= 0) {
-          // Credit the kill to the shooter if they're still in this room
           const killer = msg.killerId ? room.players.get(msg.killerId) : null;
           if (killer) killer.kills++;
           broadcastRoomAll(room, { type: 'killed', id, killerId: msg.killerId ?? null });
 
-          // Respawn this player after 3 seconds
-          setTimeout(() => {
-            if (!room.players.has(id)) return; // they disconnected before respawn
-            const sp = randomSpawnPos(room.map);
-            p.health = 100;
-            p.x = sp.x;
-            p.y = sp.y;
-            broadcastRoomAll(room, { type: 'respawned', id, x: p.x, y: p.y });
-          }, 3000);
+          if (room.mode === 'br') {
+            // No respawn in BR
+            room.brAlivePlayers.delete(id);
+            checkBrWin(room);
+          } else {
+            setTimeout(() => {
+              if (!room.players.has(id)) return;
+              const sp = randomSpawnPos(room.map);
+              p.health = 100;
+              p.x = sp.x;
+              p.y = sp.y;
+              broadcastRoomAll(room, { type: 'respawned', id, x: p.x, y: p.y });
+            }, 3000);
+          }
         }
         break;
       }
 
-      // Paintball special: relay to all other players in the room
       case 'splatter':
         broadcastRoom(room, { type: 'splattered', id }, id);
         break;
 
-      // Permafrost special: relay freeze to ALL players (including victim who sent it)
       case 'frozen':
         broadcastRoomAll(room, { type: 'playerFrozen', id: msg.targetId ?? id, shooterId: msg.shooterId ?? null });
         break;
 
-      // Paintball special: targeted splatter on the hit player
       case 'paintHit':
         broadcastRoomAll(room, { type: 'playerSplattered', id: msg.targetId ?? id });
         break;
+
+      // ── Battle Royale messages ────────────────────────────────
+
+      case 'brReady': {
+        if (room.mode !== 'br' || room.brPhase !== 'lobby') break;
+        if (msg.ready) room.brReady.add(id);
+        else           room.brReady.delete(id);
+        broadcastRoomAll(room, { type: 'brReadyState', readyIds: [...room.brReady] });
+        if (room.brReady.size === room.players.size && room.players.size >= 2) {
+          startBrMatch(room);
+        }
+        break;
+      }
+
+      case 'brDrop': {
+        if (room.mode !== 'br' || room.brPhase !== 'dropping') break;
+        const dx = Math.max(TILE_SIZE, Math.min(MAP_COLS * TILE_SIZE - TILE_SIZE, msg.x ?? p.x));
+        const dy = Math.max(TILE_SIZE, Math.min(MAP_ROWS * TILE_SIZE - TILE_SIZE, msg.y ?? p.y));
+        p.x = dx; p.y = dy;
+        broadcastRoomAll(room, { type: 'brDropConfirmed', id, x: p.x, y: p.y });
+        break;
+      }
+
+      case 'brStormDamage': {
+        if (room.mode !== 'br' || room.brPhase !== 'active') break;
+        if (p.health <= 0) break;
+        p.health = Math.max(0, p.health - Math.round(msg.damage || 0));
+        broadcastRoomAll(room, { type: 'damaged', id, health: p.health });
+        if (p.health <= 0) {
+          broadcastRoomAll(room, { type: 'killed', id, killerId: null });
+          room.brAlivePlayers.delete(id);
+          checkBrWin(room);
+        }
+        break;
+      }
+
+      case 'brChestOpen': {
+        if (room.mode !== 'br' || room.brPhase !== 'active') break;
+        const chest = room.brChests[msg.chestId];
+        if (!chest || chest.open) break;
+        const ddx = p.x - chest.x, ddy = p.y - chest.y;
+        if (Math.sqrt(ddx*ddx + ddy*ddy) > 80) break; // must be nearby
+        chest.open = true;
+        const roll = Math.random();
+        const lootType = roll < 0.50 ? 'ammo' : roll < 0.85 ? 'rare_ammo' : 'health';
+        broadcastRoomAll(room, { type: 'brChestOpened', chestId: chest.id, lootType });
+        break;
+      }
     }
   });
 
   ws.on('close', () => {
     room.players.delete(id);
+    room.brReady?.delete(id);
     broadcastRoomAll(room, { type: 'left', id });
     console.log(`[-] ${name} left room ${roomId}  (${room.players.size} in room)`);
 
-    // Delete the room when the last player leaves
+    if (room.mode === 'br') {
+      room.brAlivePlayers.delete(id);
+      checkBrWin(room);
+    }
+
     if (room.players.size === 0) {
+      if (room.brLobbyTimer) clearTimeout(room.brLobbyTimer);
+      if (room.brZoneTimer)  clearTimeout(room.brZoneTimer);
       rooms.delete(roomId);
       console.log(`[room] Room ${roomId} deleted (empty)`);
     }
@@ -309,25 +484,21 @@ wss.on('connection', (ws, req) => {
 
 // ── Helpers ───────────────────────────────────────────────────────
 
-// Strip the WebSocket from a player before JSON-serialising it
 function pub(p) {
   const { ws: _, ...rest } = p;
   return rest;
 }
 
-// Current players in a room (public state), excluding the given id
 function otherPlayersPublic(room, excludeId) {
   return Array.from(room.players.values())
     .filter(p => p.id !== excludeId)
     .map(pub);
 }
 
-// Send to one WebSocket
 function send(ws, obj) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
 }
 
-// Send to everyone in a room except one player
 function broadcastRoom(room, obj, excludeId) {
   const str = JSON.stringify(obj);
   for (const p of room.players.values()) {
@@ -337,7 +508,6 @@ function broadcastRoom(room, obj, excludeId) {
   }
 }
 
-// Send to every player in a room, no exceptions
 function broadcastRoomAll(room, obj) {
   const str = JSON.stringify(obj);
   for (const p of room.players.values()) {

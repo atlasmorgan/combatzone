@@ -111,6 +111,48 @@
         WASD — move &nbsp;|&nbsp; Mouse — aim &nbsp;|&nbsp; Click / Space — fire &nbsp;|&nbsp; R — reload
       </p>
     </div>
+
+    <!-- ── BR: MATCH LOBBY ──────────────────────────────────────── -->
+    <div id="brLobbyOverlay" style="display:none"
+      class="absolute inset-0 flex flex-col items-center justify-center bg-gray-950/97 z-50">
+      <p class="text-red-400 font-black text-3xl tracking-[0.2em] mb-2">☠ BATTLE ROYALE</p>
+      <p class="text-gray-500 font-mono text-xs tracking-widest mb-6">16-player last-tank-standing</p>
+      <ul id="brReadyList" class="flex flex-col gap-1 mb-6 w-64 font-mono text-sm"></ul>
+      <p id="brLobbyTimer" class="text-gray-500 font-mono text-xs mb-4">Auto-start in 60s</p>
+      <button onclick="brToggleReady()"
+        id="brReadyBtn"
+        class="bg-red-700 hover:bg-red-600 active:bg-red-800 text-white
+               font-black text-lg tracking-widest px-12 py-4 rounded select-none">
+        READY UP
+      </button>
+    </div>
+
+    <!-- ── BR: DROP ZONE PICKER ────────────────────────────────── -->
+    <div id="brDropOverlay" style="display:none"
+      class="absolute inset-0 flex flex-col items-center justify-center bg-gray-950/90 z-50">
+      <p class="text-red-400 font-black text-xl tracking-[0.2em] mb-2">CHOOSE LANDING SPOT</p>
+      <p class="text-gray-400 font-mono text-xs mb-4">Click the map to drop in</p>
+      <canvas id="brDropCanvas" width="400" height="400"
+        class="border-2 border-red-800 cursor-crosshair"
+        style="image-rendering:pixelated"></canvas>
+      <p id="brDropStatus" class="text-gray-500 font-mono text-xs mt-3">Launching in 5s…</p>
+    </div>
+
+    <!-- ── BR: ELIMINATED ──────────────────────────────────────── -->
+    <div id="brEliminatedOverlay" style="display:none"
+      class="absolute inset-0 flex flex-col items-center justify-center bg-gray-950/85 z-48 pointer-events-none">
+      <p class="text-red-500 font-black text-4xl tracking-[0.2em] mb-3">ELIMINATED</p>
+      <p id="brEliminatedKills" class="text-gray-400 font-mono text-sm mb-2"></p>
+      <p class="text-gray-600 font-mono text-xs">Watching match…</p>
+    </div>
+
+    <!-- ── BR: WINNER ──────────────────────────────────────────── -->
+    <div id="brWinnerOverlay" style="display:none"
+      class="absolute inset-0 flex flex-col items-center justify-center bg-gray-950/95 z-50">
+      <p class="text-yellow-400 font-black text-5xl tracking-[0.2em] mb-4">🏆</p>
+      <p id="brWinnerText" class="text-yellow-300 font-black text-2xl tracking-widest mb-2"></p>
+      <p class="text-gray-500 font-mono text-xs">Match ended — returning to lobby…</p>
+    </div>
   </div>
 
 </body>
@@ -438,6 +480,7 @@ function spawnOneBullet(w, angleOffset = 0) {
 }
 
 function fireBullet() {
+  if (brMode && brPhase === 'dropping')                     return;
   if (player.dead || afkMode || player.frozen)              return;
   if (player.ammo <= 0 && player.reserveAmmo <= 0 && player.reloadTimer <= 0) {
     if (dryfireTimer <= 0) { playDryfire(); dryfireTimer = 0.5; }
@@ -487,6 +530,7 @@ window.addEventListener('keydown', e => {
     e.preventDefault();
   if (e.code === 'Space')  fireBullet();
   if (e.code === 'KeyR')   startReload();
+  if (e.code === 'KeyE' && brMode)   brCheckChestInteract();
   if (e.code === 'KeyE')   { useSplatter(); useFreeze(); }
   if (e.code === 'Digit1') switchWeapon('ar');
   if (e.code === 'Digit2') switchWeapon('rpg');
@@ -675,6 +719,29 @@ function syncToFirebase(user) {
   }, { merge: true });
 }
 
+// ── Battle Royale state ───────────────────────────────────────────
+let brMode        = false;
+let brPhase       = 'lobby';   // 'lobby' | 'dropping' | 'active' | 'ended'
+let brReady       = false;
+let brReadyIds    = [];
+let brDropTarget  = null;      // { x, y } chosen landing world coords
+let brDropAnim    = null;      // { startX, startY, endX, endY, elapsed, duration }
+let brDropLocked  = false;
+let brChests      = [];        // [{ id, x, y, open }]
+let brZoneRadius  = 1600;
+let brZonePrevR   = 1600;
+let brZoneTargetR = 1600;
+let brZoneShrinkT = 0;
+let brZoneShrinkD = 0;
+let brStormTimer  = 0;
+let brAliveCount  = 0;
+let brWinner      = null;
+let brChestCooldown = 0;
+const BR_ZONE_CX      = MAP_COLS * TILE_SIZE / 2;  // 1000
+const BR_ZONE_CY      = MAP_ROWS * TILE_SIZE / 2;  // 1000
+const BR_STORM_TICK   = 0.5;
+const BR_STORM_DPS    = 2;
+
 // Other players in the game: id (number) → state object
 const otherPlayers = new Map();
 
@@ -859,25 +926,39 @@ function handleMessage(msg) {
     // ── Server welcome: contains our ID, map seed, and existing players ──
     case 'init':
       myId        = msg.id;
-      player.name = msg.name; // e.g. "Player 3"
+      player.name = msg.name;
 
-      // Generate the same map as every other client using the server's seed
       generateMap(msg.mapSeed);
       spawnPlayer();
       updateCamera();
 
-      // Populate existing players
       otherPlayers.clear();
       for (const p of msg.players) otherPlayers.set(p.id, { ...p });
 
       connected = true;
-      hideOverlay();
 
-      // Show the room code in the top bar and overlay
+      // BR room setup
+      if (msg.brMode) {
+        brMode  = true;
+        brPhase = msg.brPhase ?? 'lobby';
+        brChests = (msg.brChests ?? []).map(c => ({ ...c }));
+        brAliveCount = msg.players.length + 1;
+        if (brPhase === 'lobby') {
+          hideOverlay();
+          document.getElementById('brLobbyOverlay').style.display = 'flex';
+        } else if (brPhase === 'dropping') {
+          hideOverlay();
+          brShowDropOverlay();
+        } else {
+          hideOverlay();
+        }
+      } else {
+        hideOverlay();
+      }
+
       document.getElementById('roomCode').textContent    = 'ROOM: ' + roomId;
       document.getElementById('roomDisplay').textContent = 'ROOM: ' + roomId;
 
-      // Kick off the game loop on first connection
       if (!loopStarted) { loopStarted = true; requestAnimationFrame(gameLoop); }
       refreshPlayerCount();
       break;
@@ -933,7 +1014,6 @@ function handleMessage(msg) {
 
     // ── A player was killed ──
     case 'killed':
-      // Credit local kill counter if we were the shooter
       if (msg.killerId === myId) {
         player.kills++;
         sessionKillStreak++;
@@ -942,16 +1022,22 @@ function handleMessage(msg) {
       }
 
       if (msg.id === myId) {
-        // We died
         player.dead   = true;
         player.health = 0;
-        showOverlay('YOU WERE ELIMINATED — respawning in 3 s…');
         sessionKillStreak = 0;
         saveStats({ totalDeaths: loadStats().totalDeaths + 1 });
+        if (brMode) {
+          // Show eliminated screen; game canvas stays visible for passive spectating
+          document.getElementById('brEliminatedKills').textContent = `Kills this match: ${player.kills}`;
+          document.getElementById('brEliminatedOverlay').style.display = 'flex';
+        } else {
+          showOverlay('YOU WERE ELIMINATED — respawning in 3 s…');
+        }
       } else if (otherPlayers.has(msg.id)) {
         const p = otherPlayers.get(msg.id);
         p.dead = true; p.health = 0;
       }
+      if (brMode) brAliveCount = Math.max(0, brAliveCount - 1);
       break;
 
     // ── Paintball Blinding Splatter hit us ──
@@ -987,8 +1073,8 @@ function handleMessage(msg) {
 
     // ── A player (possibly us) respawned ──
     case 'respawned':
+      if (brMode) break; // no respawn in BR
       if (msg.id === myId) {
-        // Move us back to spawn and restore health / ammo
         player.x = msg.x; player.y = msg.y;
         player.health      = 100;
         player.ammo        = player.maxAmmo;
@@ -1005,12 +1091,297 @@ function handleMessage(msg) {
         p.frozen = false; p.freezeTimer = 0;
       }
       break;
+
+    // ── Battle Royale messages ────────────────────────────────────
+
+    case 'brPhaseChanged':
+      brPhase = msg.phase;
+      if (msg.phase === 'dropping') {
+        brChests = (msg.chests ?? []).map(c => ({ ...c }));
+        brAliveCount = otherPlayers.size + 1;
+        brShowDropOverlay();
+      } else if (msg.phase === 'active') {
+        document.getElementById('brDropOverlay').style.display = 'none';
+        document.getElementById('brLobbyOverlay').style.display = 'none';
+        brAliveCount = otherPlayers.size + 1;
+      } else if (msg.phase === 'ended') {
+        // winner overlay handled by brWinner message
+      }
+      break;
+
+    case 'brReadyState':
+      brReadyIds = msg.readyIds ?? [];
+      brRenderLobby();
+      break;
+
+    case 'brDropConfirmed':
+      if (msg.id !== myId && otherPlayers.has(msg.id)) {
+        otherPlayers.get(msg.id).dropTarget = { x: msg.x, y: msg.y };
+      }
+      break;
+
+    case 'brZoneShrink':
+      brZonePrevR   = brZoneRadius;
+      brZoneTargetR = msg.newRadius;
+      brZoneShrinkT = 0;
+      brZoneShrinkD = msg.tweenDuration ?? 30;
+      break;
+
+    case 'brChestOpened': {
+      const chest = brChests.find(c => c.id === msg.chestId);
+      if (chest) {
+        chest.open = true;
+        // Apply loot only to the player who opened it (proximity check)
+        const dx = player.x - chest.x, dy = player.y - chest.y;
+        if (Math.sqrt(dx*dx + dy*dy) < 100) brApplyLoot(msg.lootType);
+      }
+      break;
+    }
+
+    case 'brWinner': {
+      brWinner = msg;
+      brPhase  = 'ended';
+      document.getElementById('brWinnerText').textContent =
+        msg.winnerId === myId ? '🏆 YOU WIN!' : `WINNER: ${msg.winnerName}`;
+      document.getElementById('brWinnerOverlay').style.display = 'flex';
+      appendChatMessage('System', `${msg.winnerName} wins the match!`);
+      setTimeout(() => { location.href = './'; }, 10000);
+      break;
+    }
   }
 }
 
 function refreshPlayerCount() {
-  const total = otherPlayers.size + 1; // +1 for ourselves
+  const total = otherPlayers.size + 1;
   document.getElementById('playerCount').textContent = `● ${total} online`;
+}
+
+// ──────────────────────────────────────────────────────────────────
+// BATTLE ROYALE — helpers
+// ──────────────────────────────────────────────────────────────────
+
+function brToggleReady() {
+  brReady = !brReady;
+  netSend({ type: 'brReady', ready: brReady });
+  const btn = document.getElementById('brReadyBtn');
+  btn.textContent = brReady ? '✓ READY' : 'READY UP';
+  btn.className = brReady
+    ? 'bg-green-700 hover:bg-green-600 text-white font-black text-lg tracking-widest px-12 py-4 rounded select-none'
+    : 'bg-red-700 hover:bg-red-600 active:bg-red-800 text-white font-black text-lg tracking-widest px-12 py-4 rounded select-none';
+}
+
+function brRenderLobby() {
+  const list = document.getElementById('brReadyList');
+  if (!list) return;
+  const all = [{ id: myId, name: player.name }, ...Array.from(otherPlayers.values())];
+  list.innerHTML = all.map(p => {
+    const isReady = brReadyIds.includes(p.id);
+    return `<li class="flex items-center gap-2 ${isReady ? 'text-green-400' : 'text-gray-500'}">
+      <span>${isReady ? '✓' : '○'}</span>
+      <span class="font-mono text-xs">${escHtml(p.name ?? 'Player')}</span>
+    </li>`;
+  }).join('');
+}
+
+function brGetRandomEdgePoint() {
+  const W = MAP_COLS * TILE_SIZE, H = MAP_ROWS * TILE_SIZE;
+  const side = Math.floor(Math.random() * 4);
+  if (side === 0) return { x: Math.random() * W, y: TILE_SIZE };
+  if (side === 1) return { x: Math.random() * W, y: H - TILE_SIZE };
+  if (side === 2) return { x: TILE_SIZE,          y: Math.random() * H };
+  return              { x: W - TILE_SIZE,          y: Math.random() * H };
+}
+
+function brShowDropOverlay() {
+  document.getElementById('brLobbyOverlay').style.display = 'none';
+  const overlay = document.getElementById('brDropOverlay');
+  overlay.style.display = 'flex';
+  brDrawDropCanvas();
+
+  const dc = document.getElementById('brDropCanvas');
+  dc.onclick = (e) => {
+    if (brDropLocked) return;
+    const rect  = dc.getBoundingClientRect();
+    const scale = MAP_COLS * TILE_SIZE / dc.width;
+    const wx = (e.clientX - rect.left) * scale;
+    const wy = (e.clientY - rect.top)  * scale;
+    brDropTarget = { x: wx, y: wy };
+    const edge   = brGetRandomEdgePoint();
+    brDropAnim   = { startX: edge.x, startY: edge.y, endX: wx, endY: wy, elapsed: 0, duration: 3 };
+    brDropLocked = true;
+    netSend({ type: 'brDrop', x: wx, y: wy });
+    document.getElementById('brDropStatus').textContent = 'Dropping in…';
+    brDrawDropCanvas();
+  };
+}
+
+function brDrawDropCanvas() {
+  const dc  = document.getElementById('brDropCanvas');
+  if (!dc) return;
+  const dctx = dc.getContext('2d');
+  const scale = dc.width / (MAP_COLS * TILE_SIZE);
+
+  dctx.fillStyle = '#0d0d0d';
+  dctx.fillRect(0, 0, dc.width, dc.height);
+
+  // Draw map tiles
+  for (let row = 0; row < MAP_ROWS; row++) {
+    for (let col = 0; col < MAP_COLS; col++) {
+      dctx.fillStyle = map[row][col] === 1 ? '#2e2e20' : '#1a1a1a';
+      dctx.fillRect(col * TILE_SIZE * scale, row * TILE_SIZE * scale, TILE_SIZE * scale, TILE_SIZE * scale);
+    }
+  }
+
+  // Draw zone circle
+  const zx = BR_ZONE_CX * scale, zy = BR_ZONE_CY * scale, zr = brZoneRadius * scale;
+  dctx.save();
+  dctx.strokeStyle = 'rgba(255,60,60,0.7)';
+  dctx.lineWidth = 2;
+  dctx.beginPath(); dctx.arc(zx, zy, zr, 0, Math.PI*2); dctx.stroke();
+  dctx.restore();
+
+  // Draw other players' drop targets
+  for (const [, op] of otherPlayers) {
+    if (op.dropTarget) {
+      dctx.fillStyle = '#ff4444';
+      dctx.beginPath();
+      dctx.arc(op.dropTarget.x * scale, op.dropTarget.y * scale, 4, 0, Math.PI*2);
+      dctx.fill();
+    }
+  }
+
+  // Draw our chosen spot / animated token
+  if (brDropAnim) {
+    const t  = Math.min(1, brDropAnim.elapsed / brDropAnim.duration);
+    const cx = (brDropAnim.startX + (brDropAnim.endX - brDropAnim.startX) * t) * scale;
+    const cy = (brDropAnim.startY + (brDropAnim.endY - brDropAnim.startY) * t) * scale;
+    dctx.fillStyle = '#44ff88';
+    dctx.beginPath(); dctx.arc(cx, cy, 6, 0, Math.PI*2); dctx.fill();
+    // Draw line from start to end
+    dctx.strokeStyle = 'rgba(68,255,136,0.3)';
+    dctx.lineWidth = 1;
+    dctx.beginPath();
+    dctx.moveTo(brDropAnim.startX * scale, brDropAnim.startY * scale);
+    dctx.lineTo(brDropAnim.endX * scale, brDropAnim.endY * scale);
+    dctx.stroke();
+  } else if (brDropTarget) {
+    dctx.fillStyle = '#44ff88';
+    dctx.beginPath(); dctx.arc(brDropTarget.x * scale, brDropTarget.y * scale, 5, 0, Math.PI*2); dctx.fill();
+  }
+}
+
+function brUpdateStorm(dt) {
+  if (player.dead) return;
+  const dx = player.x - BR_ZONE_CX, dy = player.y - BR_ZONE_CY;
+  if (Math.sqrt(dx*dx + dy*dy) > brZoneRadius) {
+    brStormTimer += dt;
+    if (brStormTimer >= BR_STORM_TICK) {
+      brStormTimer = 0;
+      netSend({ type: 'brStormDamage', damage: BR_STORM_DPS * BR_STORM_TICK });
+    }
+  } else {
+    brStormTimer = 0;
+  }
+}
+
+function brCheckChestInteract() {
+  if (brChestCooldown > 0 || player.dead || brPhase !== 'active') return;
+  for (const chest of brChests) {
+    if (chest.open) continue;
+    const dx = player.x - chest.x, dy = player.y - chest.y;
+    if (Math.sqrt(dx*dx + dy*dy) < 60) {
+      netSend({ type: 'brChestOpen', chestId: chest.id });
+      brChestCooldown = 0.5;
+      return;
+    }
+  }
+}
+
+function brApplyLoot(lootType) {
+  if (lootType === 'ammo') {
+    const w = WEAPONS[player.activeWeapon];
+    player.ammo = w.magSize;
+    player.ammoByWeapon[player.activeWeapon] = w.magSize;
+    saveStats({ battleBucks: loadStats().battleBucks + 25 });
+    appendChatMessage('System', 'Chest: ammo restocked +25 BB!');
+  } else if (lootType === 'rare_ammo') {
+    for (const id of Object.keys(player.reserveByWeapon)) {
+      player.reserveByWeapon[id] = WEAPONS[id]?.reserveSize ?? player.reserveByWeapon[id];
+    }
+    player.reserveAmmo = WEAPONS[player.activeWeapon].reserveSize;
+    appendChatMessage('System', 'Chest: all reserves refilled!');
+  } else if (lootType === 'health') {
+    player.health = player.maxHealth;
+    appendChatMessage('System', 'Chest: full health restored!');
+  }
+}
+
+function drawBrZone() {
+  const sx = BR_ZONE_CX - camera.x;
+  const sy = BR_ZONE_CY - camera.y;
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(180,30,30,0.22)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.beginPath();
+  ctx.arc(sx, sy, brZoneRadius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,60,60,0.85)';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(sx, sy, brZoneRadius, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBrChests() {
+  for (const chest of brChests) {
+    if (chest.open) continue;
+    const sx = chest.x - camera.x, sy = chest.y - camera.y;
+    if (sx < -30 || sx > canvas.width + 30 || sy < -30 || sy > canvas.height + 30) continue;
+
+    ctx.save();
+    ctx.fillStyle   = '#d4a017';
+    ctx.strokeStyle = '#ffdd66';
+    ctx.lineWidth   = 2;
+    ctx.fillRect(sx - 10, sy - 10, 20, 20);
+    ctx.strokeRect(sx - 10, sy - 10, 20, 20);
+
+    // Interaction prompt
+    const ddx = player.x - chest.x, ddy = player.y - chest.y;
+    if (Math.sqrt(ddx*ddx + ddy*ddy) < 80) {
+      ctx.fillStyle    = '#fff';
+      ctx.font         = 'bold 11px monospace';
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText('[E] Open', sx, sy - 13);
+    }
+    ctx.restore();
+  }
+}
+
+function drawBrHUD() {
+  ctx.save();
+  ctx.font         = 'bold 14px monospace';
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'top';
+
+  // Alive count
+  ctx.fillStyle = 'white';
+  ctx.fillText(`${brAliveCount} ALIVE`, canvas.width / 2, 10);
+
+  // Storm warning
+  const dx = player.x - BR_ZONE_CX, dy = player.y - BR_ZONE_CY;
+  if (!player.dead && Math.sqrt(dx*dx + dy*dy) > brZoneRadius) {
+    ctx.fillStyle = `rgba(255,80,80,${0.6 + 0.4 * Math.sin(Date.now() / 200)})`;
+    ctx.font      = 'bold 12px monospace';
+    ctx.fillText('⚠ STORM DAMAGE', canvas.width / 2, 28);
+  }
+  ctx.restore();
 }
 
 // Distance-based damage for shotgun; fixed damage for all other weapons
@@ -1029,8 +1400,36 @@ function getBulletDamage(b, tx, ty) {
 // UPDATE  — called every frame
 // ──────────────────────────────────────────────────────────────────
 function update(dt) {
-  // While connecting or dead, nothing happens
-  if (!connected || player.dead) return;
+  if (!connected) return;
+
+  // ── BR: drop animation phase — block all normal gameplay ─────────
+  if (brMode && brPhase === 'dropping') {
+    if (brDropAnim) {
+      brDropAnim.elapsed = Math.min(brDropAnim.duration, brDropAnim.elapsed + dt);
+      const t = brDropAnim.elapsed / brDropAnim.duration;
+      player.x = brDropAnim.startX + (brDropAnim.endX - brDropAnim.startX) * t;
+      player.y = brDropAnim.startY + (brDropAnim.endY - brDropAnim.startY) * t;
+      updateCamera();
+      brDrawDropCanvas();
+    }
+    return;
+  }
+
+  // ── BR: zone radius tween ─────────────────────────────────────────
+  if (brMode && brZoneShrinkD > 0) {
+    brZoneShrinkT = Math.min(brZoneShrinkD, brZoneShrinkT + dt);
+    const t = brZoneShrinkT / brZoneShrinkD;
+    brZoneRadius = brZonePrevR + (brZoneTargetR - brZonePrevR) * t;
+  }
+
+  // ── BR: storm damage tick ─────────────────────────────────────────
+  if (brMode && brPhase === 'active' && !player.dead) brUpdateStorm(dt);
+
+  // ── BR: chest interact cooldown ───────────────────────────────────
+  if (brChestCooldown > 0) brChestCooldown = Math.max(0, brChestCooldown - dt);
+
+  // While dead, nothing else happens
+  if (player.dead) return;
 
   // ── Tick local freeze timer ──
   if (player.frozen) {
@@ -1726,19 +2125,23 @@ function draw() {
 
   drawMap();
 
+  if (brMode && brPhase === 'active') drawBrChests();
+  if (brMode && brPhase === 'active') drawBrZone();
+
   // Remote (enemy) bullets — orange/red
   drawBullets(remoteBullets, '#ff5533', 'rgba(255,80,50,0.30)');
   // Own bullets — yellow
   drawBullets(bullets, '#ffdd44', 'rgba(255,200,50,0.30)');
 
   drawOtherPlayers();
-  drawPlayer();
+  if (brPhase !== 'dropping') drawPlayer();
   drawHitboxes();
   drawJoystick();
-  drawMinimap();
+  if (brPhase === 'dropping') { /* drop overlay canvas handles this */ } else drawMinimap();
   drawHUD();
+  if (brMode && brPhase === 'active') drawBrHUD();
   drawWeaponSwitcher();
-  drawScreenSplatters(); // always on top
+  drawScreenSplatters();
 }
 
 // ──────────────────────────────────────────────────────────────────
