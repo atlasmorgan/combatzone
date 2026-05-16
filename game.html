@@ -1018,7 +1018,7 @@ function getBulletDamage(b, tx, ty) {
   if (b.weapon === 'shotgun' && b.ox !== undefined) {
     const dx = tx - b.ox, dy = ty - b.oy;
     const tiles = Math.sqrt(dx*dx + dy*dy) / TILE_SIZE;
-    if (tiles <= 5)  return 95;
+    if (tiles <= 6)  return 7;
     if (tiles <= 10) return 20;
     return 5;
   }
