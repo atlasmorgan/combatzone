@@ -841,6 +841,11 @@ function handleCommand(raw) {
       appendChatMessage('System', `+${amount} BB granted. Total: ${newBucks} BB`);
       break;
     }
+    case 'heal':
+      if (!adminUnlocked) { appendChatMessage('System', `Unknown command: /heal`); break; }
+      player.health = player.maxHealth;
+      appendChatMessage('System', 'Health restored to 100.');
+      break;
     default:
       appendChatMessage('System', `Unknown command: /${cmd}`);
   }
