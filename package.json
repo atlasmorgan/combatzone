@@ -2,11 +2,11 @@
   "name": "combat-zone",
   "version": "1.0.0",
   "description": "Top-down multiplayer PvP tank game",
-  "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "wrangler dev --port 3000",
+    "deploy": "wrangler deploy"
   },
-  "dependencies": {
-    "ws": "^8.18.0"
+  "devDependencies": {
+    "wrangler": "^4.0.0"
   }
 }

@@ -6,7 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 npm install     # first time only
-npm start       # starts Node on http://localhost:3000
+npm start       # wrangler dev on http://localhost:3000
+npm run deploy  # deploy to Cloudflare
 ```
 
 No build step. Pure ES6 client-side scripts served directly by Node. Open `http://localhost:3000` for the lobby, which links to `game.html`.
@@ -15,7 +16,8 @@ No build step. Pure ES6 client-side scripts served directly by Node. Open `http:
 
 The project is a real-time multiplayer top-down tank game with three main files:
 
-**`server.js`** — Node.js HTTP + WebSocket server (~300 lines)
+**`src/worker.js`** — Cloudflare Worker; `Lobby` Durable Object (room registry, `/api/rooms*`) and `Room` Durable Object (one per room, WebSocket game logic). Static files in `public/`. (Replaces the old Node `server.js`.)
+- Details below describe the same logic:
 - Serves all static files (index.html, game.html, assets/)
 - REST: `GET /api/rooms`, `POST /api/rooms`
 - WebSocket: relays messages between players in the same room; handles hit/kill/respawn logic server-side
